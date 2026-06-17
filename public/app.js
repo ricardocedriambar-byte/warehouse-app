@@ -246,9 +246,20 @@ async function handleScannedCode(rawValue) {
 }
 
 // ---------- camera scanning ----------
+function debugLog(msg) {
+  const panel = $('#debug-panel');
+  if (!panel) return;
+  panel.style.display = 'block';
+  const line = document.createElement('div');
+  line.textContent = msg;
+  panel.appendChild(line);
+  panel.scrollTop = panel.scrollHeight;
+}
+
 async function startScanner() {
   const stage = $('#scan-stage');
   const video = $('#scan-video');
+  debugLog('A iniciar câmara…');
 
   try {
     state.stream = await navigator.mediaDevices.getUserMedia({
@@ -258,36 +269,39 @@ async function startScanner() {
         height: { ideal: 720 }
       }
     });
+    debugLog('getUserMedia OK');
   } catch (err) {
-    console.error(err);
-    toast('Sem acesso à câmara. Verifique as permissões.', 'error');
+    debugLog('ERRO getUserMedia: ' + err.name + ' — ' + err.message);
+    toast('Sem acesso à câmara.', 'error');
     return;
   }
 
-  video.srcObject = state.stream;
+  try {
+    video.srcObject = state.stream;
+    debugLog('srcObject definido, readyState=' + video.readyState);
 
-  // Firefox for Android can report a live, visibly-rendering <video> before
-  // videoWidth/videoHeight have actually settled to their real values, which
-  // makes drawImage() capture blank/stale canvas data even though the
-  // preview looks fine on screen. Waiting for loadedmetadata (with play()
-  // as a fallback for browsers that fire it late) avoids scanning before
-  // real dimensions are available.
-  await new Promise((resolve) => {
-    if (video.readyState >= 1 && video.videoWidth > 0) { resolve(); return; }
-    video.addEventListener('loadedmetadata', resolve, { once: true });
-  });
-  await video.play();
+    await new Promise((resolve) => {
+      if (video.readyState >= 1 && video.videoWidth > 0) { resolve(); return; }
+      video.addEventListener('loadedmetadata', resolve, { once: true });
+      setTimeout(resolve, 1500); // safety net in case the event never fires
+    });
+    debugLog('metadata pronta: ' + video.videoWidth + '×' + video.videoHeight + ', readyState=' + video.readyState);
 
-  video.classList.add('live');
-  stage.dataset.scanning = 'true';
+    await video.play();
+    debugLog('play() concluído');
 
-  // BarcodeDetector support on Android Chrome/Firefox is inconsistent
-  // across OEM builds (it can report as available but never actually
-  // detect anything), so jsQR — a predictable, well-tested JS
-  // implementation — is used as the primary scanner everywhere rather
-  // than just as an iOS fallback.
-  await ensureJsQR();
-  scanLoopFallback(video);
+    video.classList.add('live');
+    stage.dataset.scanning = 'true';
+
+    await ensureJsQR();
+    debugLog('jsQR carregado: ' + (typeof window.jsQR));
+
+    scanLoopFallback(video);
+    debugLog('ciclo de leitura iniciado');
+  } catch (err) {
+    debugLog('ERRO: ' + err.name + ' — ' + err.message);
+    toast('Erro ao iniciar leitor.', 'error');
+  }
 }
 
 function stopScanner() {
@@ -334,30 +348,50 @@ function scanLoopFallback(video) {
   const TARGET_WIDTH = 480;
   let frameCount = 0;
   let readyFrameCount = 0;
+  let lastDebugAt = 0;
 
   const tick = () => {
     if (!state.stream) return;
     frameCount++;
+
+    const now = performance.now();
+    const shouldLog = now - lastDebugAt > 500; // throttle to ~2x/sec
+
     if (video.readyState === video.HAVE_ENOUGH_DATA && video.videoWidth > 0) {
       readyFrameCount++;
       const scale = TARGET_WIDTH / video.videoWidth;
       canvas.width = TARGET_WIDTH;
       canvas.height = Math.round(video.videoHeight * scale);
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const code = window.jsQR(imageData.data, imageData.width, imageData.height);
 
-      // TEMPORARY debug readout — remove once scanning is confirmed working.
-      if (hint) {
-        hint.textContent = `${video.videoWidth}×${video.videoHeight} · frames lidos: ${readyFrameCount}/${frameCount} · ${code ? 'código detetado!' : 'a procurar…'}`;
+      let code = null;
+      let drawError = null;
+      try {
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        code = window.jsQR(imageData.data, imageData.width, imageData.height);
+      } catch (err) {
+        drawError = err;
+      }
+
+      if (shouldLog) {
+        lastDebugAt = now;
+        const msg = drawError
+          ? `ERRO no frame: ${drawError.name} — ${drawError.message}`
+          : `frame ${readyFrameCount}/${frameCount} · canvas ${canvas.width}×${canvas.height} · ${code ? 'CÓDIGO ENCONTRADO' : 'sem código'}`;
+        debugLog(msg);
+        if (hint) hint.textContent = msg;
       }
 
       if (code && code.data) {
+        debugLog('Conteúdo lido: ' + code.data);
         handleScannedCode(code.data);
         return;
       }
-    } else if (hint) {
-      hint.textContent = `a aguardar vídeo… (readyState=${video.readyState}, ${video.videoWidth}×${video.videoHeight})`;
+    } else if (shouldLog) {
+      lastDebugAt = now;
+      const msg = `vídeo não pronto (readyState=${video.readyState}, ${video.videoWidth}×${video.videoHeight})`;
+      debugLog(msg);
+      if (hint) hint.textContent = msg;
     }
     state.scanLoopId = requestAnimationFrame(tick);
   };
