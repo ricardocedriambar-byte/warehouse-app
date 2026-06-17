@@ -6,7 +6,6 @@ const state = {
   currentItem: null,
   stream: null,
   scanLoopId: null,
-  detector: null, // BarcodeDetector instance, if supported
 };
 
 // ---------- small DOM helpers ----------
@@ -253,7 +252,11 @@ async function startScanner() {
 
   try {
     state.stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: 'environment' }
+      video: {
+        facingMode: 'environment',
+        width: { ideal: 1280 },
+        height: { ideal: 720 }
+      }
     });
   } catch (err) {
     console.error(err);
@@ -262,24 +265,29 @@ async function startScanner() {
   }
 
   video.srcObject = state.stream;
+
+  // Firefox for Android can report a live, visibly-rendering <video> before
+  // videoWidth/videoHeight have actually settled to their real values, which
+  // makes drawImage() capture blank/stale canvas data even though the
+  // preview looks fine on screen. Waiting for loadedmetadata (with play()
+  // as a fallback for browsers that fire it late) avoids scanning before
+  // real dimensions are available.
+  await new Promise((resolve) => {
+    if (video.readyState >= 1 && video.videoWidth > 0) { resolve(); return; }
+    video.addEventListener('loadedmetadata', resolve, { once: true });
+  });
   await video.play();
+
   video.classList.add('live');
   stage.dataset.scanning = 'true';
 
-  if ('BarcodeDetector' in window) {
-    try {
-      state.detector = new BarcodeDetector({ formats: ['qr_code'] });
-    } catch {
-      state.detector = null;
-    }
-  }
-
-  if (state.detector) {
-    scanLoopNative(video);
-  } else {
-    await ensureJsQR();
-    scanLoopFallback(video);
-  }
+  // BarcodeDetector support on Android Chrome/Firefox is inconsistent
+  // across OEM builds (it can report as available but never actually
+  // detect anything), so jsQR — a predictable, well-tested JS
+  // implementation — is used as the primary scanner everywhere rather
+  // than just as an iOS fallback.
+  await ensureJsQR();
+  scanLoopFallback(video);
 }
 
 function stopScanner() {
@@ -298,27 +306,8 @@ function stopScanner() {
   stage.dataset.scanning = 'false';
 }
 
-function scanLoopNative(video) {
-  let busy = false;
-  const tick = async () => {
-    if (!state.stream) return;
-    if (!busy) {
-      busy = true;
-      try {
-        const codes = await state.detector.detect(video);
-        if (codes && codes.length > 0) {
-          handleScannedCode(codes[0].rawValue);
-          return;
-        }
-      } catch {
-        // detect() can throw if the video frame isn't ready yet; ignore and retry.
-      }
-      busy = false;
-    }
-    state.scanLoopId = requestAnimationFrame(tick);
-  };
-  state.scanLoopId = requestAnimationFrame(tick);
-}
+// Native BarcodeDetector is intentionally not used — see the note in
+// startScanner() above for why jsQR is the scanner for all platforms.
 
 // jsQR fallback for browsers without BarcodeDetector (notably Safari/iOS).
 let jsQRLoaded = false;
@@ -336,19 +325,39 @@ function ensureJsQR() {
 function scanLoopFallback(video) {
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  const hint = $('#scan-hint');
+
+  // Running jsQR on a full 1920x1080+ camera frame every animation frame is
+  // far more pixel data than detection needs and can fall behind on
+  // Android, making scanning feel unresponsive. Downscaling to a fixed
+  // width keeps each frame's decode fast and consistent across devices.
+  const TARGET_WIDTH = 480;
+  let frameCount = 0;
+  let readyFrameCount = 0;
 
   const tick = () => {
     if (!state.stream) return;
-    if (video.readyState === video.HAVE_ENOUGH_DATA) {
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
+    frameCount++;
+    if (video.readyState === video.HAVE_ENOUGH_DATA && video.videoWidth > 0) {
+      readyFrameCount++;
+      const scale = TARGET_WIDTH / video.videoWidth;
+      canvas.width = TARGET_WIDTH;
+      canvas.height = Math.round(video.videoHeight * scale);
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
       const code = window.jsQR(imageData.data, imageData.width, imageData.height);
+
+      // TEMPORARY debug readout — remove once scanning is confirmed working.
+      if (hint) {
+        hint.textContent = `${video.videoWidth}×${video.videoHeight} · frames lidos: ${readyFrameCount}/${frameCount} · ${code ? 'código detetado!' : 'a procurar…'}`;
+      }
+
       if (code && code.data) {
         handleScannedCode(code.data);
         return;
       }
+    } else if (hint) {
+      hint.textContent = `a aguardar vídeo… (readyState=${video.readyState}, ${video.videoWidth}×${video.videoHeight})`;
     }
     state.scanLoopId = requestAnimationFrame(tick);
   };
