@@ -1,0 +1,13 @@
+{
+  "functions": {
+    "api/*.js": {
+      "runtime": "@vercel/node@3"
+    }
+  },
+  "headers": [
+    {
+      "source": "/sw.js",
+      "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
+    }
+  ]
+}
