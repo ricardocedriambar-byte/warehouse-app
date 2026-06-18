@@ -2,8 +2,8 @@
 // (offline-ish) even with a flaky warehouse wifi signal. Data requests
 // to /api/* are NOT cached — stock/price must always be live, never stale.
 
-const CACHE_NAME = 'armazem-shell-v1';
-const SHELL_FILES = ['/', '/index.html', '/manifest.json', '/app.css', '/app.js'];
+const CACHE_NAME = 'armazem-shell-v2';
+const SHELL_FILES = ['/', '/index.html', '/manifest.json', '/app.css', '/app.js', '/jsQR.js'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(

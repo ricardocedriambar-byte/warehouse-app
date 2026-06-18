@@ -324,16 +324,48 @@ function stopScanner() {
 // startScanner() above for why jsQR is the scanner for all platforms.
 
 // jsQR fallback for browsers without BarcodeDetector (notably Safari/iOS).
+// The local copy (served by our own deployment) is tried first so scanning
+// never depends on reaching an external CDN — some networks/browsers block
+// or fail to reach specific CDNs (seen on Firefox Android with
+// cdnjs.cloudflare.com). External CDNs are kept only as a last-resort
+// fallback in case the local file is ever missing.
 let jsQRLoaded = false;
-function ensureJsQR() {
-  if (jsQRLoaded || window.jsQR) { jsQRLoaded = true; return Promise.resolve(); }
+const JSQR_SOURCES = [
+  '/jsQR.js',
+  'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.js',
+  'https://unpkg.com/jsqr@1.4.0/dist/jsQR.js'
+];
+
+function loadScript(src) {
   return new Promise((resolve, reject) => {
     const script = document.createElement('script');
-    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.js';
-    script.onload = () => { jsQRLoaded = true; resolve(); };
-    script.onerror = reject;
+    script.src = src;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error(`falhou: ${src}`));
     document.head.appendChild(script);
   });
+}
+
+async function ensureJsQR() {
+  if (jsQRLoaded || window.jsQR) { jsQRLoaded = true; return; }
+
+  const errors = [];
+  for (const src of JSQR_SOURCES) {
+    try {
+      debugLog('A tentar carregar jsQR de: ' + src);
+      await loadScript(src);
+      if (window.jsQR) {
+        jsQRLoaded = true;
+        debugLog('jsQR carregado com sucesso de: ' + src);
+        return;
+      }
+    } catch (err) {
+      debugLog('Falhou: ' + src);
+      errors.push(err.message);
+    }
+  }
+  throw new Error('Não foi possível carregar jsQR de nenhuma fonte: ' + errors.join('; '));
 }
 
 function scanLoopFallback(video) {
