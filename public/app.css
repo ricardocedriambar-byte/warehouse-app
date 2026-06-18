@@ -39,11 +39,13 @@ input { font-family: var(--font-mono); }
 #app {
   height: 100vh;
   height: 100dvh;
+  width: 100%;
   display: flex;
   flex-direction: column;
   max-width: 560px;
   margin: 0 auto;
   position: relative;
+  overflow-x: hidden;
   background:
     linear-gradient(180deg, rgba(184,123,63,0.05), transparent 120px),
     var(--ink);
@@ -242,7 +244,7 @@ input { font-family: var(--font-mono); }
 }
 .field-card__current[data-low="true"] { color: var(--red); }
 
-.stepper { display: flex; align-items: stretch; gap: 8px; }
+.stepper { display: flex; align-items: stretch; gap: 8px; max-width: 100%; }
 .stepper__btn {
   width: 48px; flex: 0 0 48px;
   background: var(--surface-raised);
@@ -254,7 +256,11 @@ input { font-family: var(--font-mono); }
 }
 .stepper__btn:active { background: var(--timber-bright); color: var(--ink); }
 .stepper__input {
-  flex: 1;
+  flex: 1 1 auto;
+  min-width: 0; /* without this, flex items default to their intrinsic
+                   content width, which on number inputs (especially with
+                   native spinner arrows) can exceed the available space
+                   and push the row wider than its container */
   background: var(--ink);
   border: 1px solid var(--line);
   color: var(--paper);
@@ -264,6 +270,18 @@ input { font-family: var(--font-mono); }
   padding: 0 8px;
 }
 .stepper__input:focus { outline: 2px solid var(--timber-bright); outline-offset: -1px; }
+
+/* Hide native number-input up/down arrows — we have our own +/- buttons,
+   and the native spinner adds extra intrinsic width on some browsers
+   (notably Firefox Android) that contributes to horizontal overflow. */
+.stepper__input::-webkit-outer-spin-button,
+.stepper__input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.stepper__input[type="number"] {
+  -moz-appearance: textfield;
+}
 
 .field-card__save {
   margin-top: 12px;

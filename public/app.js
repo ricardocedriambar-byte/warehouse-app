@@ -246,20 +246,9 @@ async function handleScannedCode(rawValue) {
 }
 
 // ---------- camera scanning ----------
-function debugLog(msg) {
-  const panel = $('#debug-panel');
-  if (!panel) return;
-  panel.style.display = 'block';
-  const line = document.createElement('div');
-  line.textContent = msg;
-  panel.appendChild(line);
-  panel.scrollTop = panel.scrollHeight;
-}
-
 async function startScanner() {
   const stage = $('#scan-stage');
   const video = $('#scan-video');
-  debugLog('A iniciar câmara…');
 
   try {
     state.stream = await navigator.mediaDevices.getUserMedia({
@@ -269,37 +258,32 @@ async function startScanner() {
         height: { ideal: 720 }
       }
     });
-    debugLog('getUserMedia OK');
   } catch (err) {
-    debugLog('ERRO getUserMedia: ' + err.name + ' — ' + err.message);
-    toast('Sem acesso à câmara.', 'error');
+    console.error(err);
+    toast('Sem acesso à câmara. Verifique as permissões.', 'error');
     return;
   }
 
   try {
     video.srcObject = state.stream;
-    debugLog('srcObject definido, readyState=' + video.readyState);
 
+    // Some browsers (notably Firefox on Android) can render a visibly live
+    // <video> before videoWidth/videoHeight have actually settled, so wait
+    // for loadedmetadata with a short timeout as a safety net.
     await new Promise((resolve) => {
       if (video.readyState >= 1 && video.videoWidth > 0) { resolve(); return; }
       video.addEventListener('loadedmetadata', resolve, { once: true });
-      setTimeout(resolve, 1500); // safety net in case the event never fires
+      setTimeout(resolve, 1500);
     });
-    debugLog('metadata pronta: ' + video.videoWidth + '×' + video.videoHeight + ', readyState=' + video.readyState);
 
     await video.play();
-    debugLog('play() concluído');
-
     video.classList.add('live');
     stage.dataset.scanning = 'true';
 
     await ensureJsQR();
-    debugLog('jsQR carregado: ' + (typeof window.jsQR));
-
     scanLoopFallback(video);
-    debugLog('ciclo de leitura iniciado');
   } catch (err) {
-    debugLog('ERRO: ' + err.name + ' — ' + err.message);
+    console.error(err);
     toast('Erro ao iniciar leitor.', 'error');
   }
 }
@@ -353,15 +337,12 @@ async function ensureJsQR() {
   const errors = [];
   for (const src of JSQR_SOURCES) {
     try {
-      debugLog('A tentar carregar jsQR de: ' + src);
       await loadScript(src);
       if (window.jsQR) {
         jsQRLoaded = true;
-        debugLog('jsQR carregado com sucesso de: ' + src);
         return;
       }
     } catch (err) {
-      debugLog('Falhou: ' + src);
       errors.push(err.message);
     }
   }
@@ -371,59 +352,28 @@ async function ensureJsQR() {
 function scanLoopFallback(video) {
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  const hint = $('#scan-hint');
 
   // Running jsQR on a full 1920x1080+ camera frame every animation frame is
   // far more pixel data than detection needs and can fall behind on
   // Android, making scanning feel unresponsive. Downscaling to a fixed
   // width keeps each frame's decode fast and consistent across devices.
   const TARGET_WIDTH = 480;
-  let frameCount = 0;
-  let readyFrameCount = 0;
-  let lastDebugAt = 0;
 
   const tick = () => {
     if (!state.stream) return;
-    frameCount++;
-
-    const now = performance.now();
-    const shouldLog = now - lastDebugAt > 500; // throttle to ~2x/sec
 
     if (video.readyState === video.HAVE_ENOUGH_DATA && video.videoWidth > 0) {
-      readyFrameCount++;
       const scale = TARGET_WIDTH / video.videoWidth;
       canvas.width = TARGET_WIDTH;
       canvas.height = Math.round(video.videoHeight * scale);
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-      let code = null;
-      let drawError = null;
-      try {
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        code = window.jsQR(imageData.data, imageData.width, imageData.height);
-      } catch (err) {
-        drawError = err;
-      }
-
-      if (shouldLog) {
-        lastDebugAt = now;
-        const msg = drawError
-          ? `ERRO no frame: ${drawError.name} — ${drawError.message}`
-          : `frame ${readyFrameCount}/${frameCount} · canvas ${canvas.width}×${canvas.height} · ${code ? 'CÓDIGO ENCONTRADO' : 'sem código'}`;
-        debugLog(msg);
-        if (hint) hint.textContent = msg;
-      }
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const code = window.jsQR(imageData.data, imageData.width, imageData.height);
 
       if (code && code.data) {
-        debugLog('Conteúdo lido: ' + code.data);
         handleScannedCode(code.data);
         return;
       }
-    } else if (shouldLog) {
-      lastDebugAt = now;
-      const msg = `vídeo não pronto (readyState=${video.readyState}, ${video.videoWidth}×${video.videoHeight})`;
-      debugLog(msg);
-      if (hint) hint.textContent = msg;
     }
     state.scanLoopId = requestAnimationFrame(tick);
   };
