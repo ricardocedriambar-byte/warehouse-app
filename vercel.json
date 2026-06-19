@@ -4,5 +4,12 @@
       "source": "/sw.js",
       "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
     }
+  ],
+  "crons": [
+    {
+      "path": "/api/sync-prices",
+      "schedule": "0 6 * * *"
+    }
   ]
 }
+
