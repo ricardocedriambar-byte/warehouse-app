@@ -45,7 +45,8 @@ input { font-family: var(--font-mono); }
   max-width: 560px;
   margin: 0 auto;
   position: relative;
-  overflow-x: hidden;
+  overflow: hidden; /* block both axes — scrolling happens inside .view, not here */
+  overscroll-behavior: none;
   background:
     linear-gradient(180deg, rgba(184,123,63,0.05), transparent 120px),
     var(--ink);
@@ -88,6 +89,7 @@ input { font-family: var(--font-mono); }
 .view {
   position: absolute; inset: 0;
   overflow-y: auto;
+  overscroll-behavior-y: none;
   display: none;
   padding-bottom: 24px;
 }

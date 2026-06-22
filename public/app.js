@@ -460,6 +460,18 @@ function init() {
 
   loadAllItems();
 
+  // Chrome PWA on Android has a built-in pull-to-refresh gesture that
+  // CSS overscroll-behavior alone doesn't always block. This prevents it
+  // by intercepting touchmove on the document when the active scrollable
+  // view is already at the top — the exact condition that triggers the
+  // Chrome PTR animation. Touches inside scrollable content are unaffected.
+  document.addEventListener('touchmove', (e) => {
+    const activeView = document.querySelector('.view[data-active="true"]');
+    if (activeView && activeView.scrollTop === 0) {
+      e.preventDefault();
+    }
+  }, { passive: false });
+
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('/sw.js').catch((err) => console.error('SW registration failed', err));
   }
