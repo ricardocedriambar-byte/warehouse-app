@@ -79,7 +79,7 @@ module.exports = async (req, res) => {
   const toUpdate = [];
   const logEntries = [];
 
-  for (const [sku, newPreco] of prices) {
+  for (const [sku, { preco: newPreco, valorCompra: newValorCompra }] of prices) {
     const item = sheetBySku.get(sku);
     if (!item) {
       summary.notFoundInSheet.push(sku);
@@ -87,24 +87,32 @@ module.exports = async (req, res) => {
     }
     summary.matched++;
 
-    const currentPreco = item.preco;
-    // Treat as unchanged if within a tiny epsilon, to avoid rewriting
-    // identical values due to floating point noise.
-    if (currentPreco !== null && Math.abs(currentPreco - newPreco) < 0.0005) {
+    const precoChanged = item.preco === null || Math.abs(item.preco - newPreco) >= 0.0005;
+    const valorCompraChanged = newValorCompra !== null &&
+      (item.valorCompra === null || Math.abs(item.valorCompra - newValorCompra) >= 0.0005);
+
+    if (!precoChanged && !valorCompraChanged) {
       summary.unchanged++;
       continue;
     }
 
     summary.changed++;
-    toUpdate.push({ rowNumber: item.rowNumber, preco: newPreco });
-    logEntries.push({
-      sku,
-      descricao: item.descricao,
-      field: 'PRECO (sync OneDrive)',
-      oldValue: currentPreco,
-      newValue: newPreco,
-      note: 'Sincronização automática TABELA_PLACAS'
-    });
+    toUpdate.push({ rowNumber: item.rowNumber, preco: newPreco, valorCompra: newValorCompra });
+
+    if (precoChanged) {
+      logEntries.push({
+        sku, descricao: item.descricao, field: 'PRECO (sync)',
+        oldValue: item.preco, newValue: newPreco,
+        note: 'Sincronização automática TABELA'
+      });
+    }
+    if (valorCompraChanged) {
+      logEntries.push({
+        sku, descricao: item.descricao, field: 'VALOR COMPRA (sync)',
+        oldValue: item.valorCompra, newValue: newValorCompra,
+        note: 'Sincronização automática TABELA'
+      });
+    }
   }
 
   try {
