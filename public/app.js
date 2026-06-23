@@ -431,12 +431,551 @@ function renderBrowseList(query) {
   });
 }
 
+// ============================================================
+// ORDER MANAGEMENT
+// ============================================================
+
+const orderState = {
+  orders: [],
+  clients: [],
+  currentOrder: null,
+  newOrderLines: [],     // lines being assembled for a new order
+  newOrderClient: null,
+  filterActive: true     // true = show active only, false = show all
+};
+
+// ---------- status helpers ----------
+const STATUS_LABELS = {
+  'Rascunho': { label: 'Rascunho', color: '' },
+  'Enviado': { label: 'Enviado', color: 'Enviado' },
+  'Em separação': { label: 'Em separação', color: 'Em separação' },
+  'Concluído': { label: 'Concluído', color: 'Concluído' },
+  'Cancelado': { label: 'Cancelado', color: '' }
+};
+
+function isActiveOrder(order) {
+  return !['Concluído', 'Cancelado'].includes(order.status);
+}
+
+// ---------- API helpers ----------
+async function apiGet(path) {
+  const res = await fetch(path);
+  if (!res.ok) throw new Error(`${path}: ${res.status}`);
+  return res.json();
+}
+
+async function apiPost(path, body) {
+  const res = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || `${path}: ${res.status}`);
+  }
+  return res.json();
+}
+
+async function apiPatch(path, body) {
+  const res = await fetch(path, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || `${path}: ${res.status}`);
+  }
+  return res.json();
+}
+
+// ---------- load orders ----------
+async function loadOrders({ silent = false } = {}) {
+  try {
+    const [ordersData, clientsData] = await Promise.all([
+      apiGet('/api/orders'),
+      apiGet('/api/clients')
+    ]);
+    orderState.orders = ordersData.orders || [];
+    orderState.clients = clientsData.clients || [];
+    return orderState.orders;
+  } catch (err) {
+    if (!silent) toast('Erro ao carregar encomendas', 'error');
+    console.error(err);
+    return [];
+  }
+}
+
+// ---------- orders list ----------
+function renderOrdersList() {
+  const list = $('#orders-list');
+  if (!list) return;
+
+  const shown = orderState.filterActive
+    ? orderState.orders.filter(isActiveOrder)
+    : orderState.orders;
+
+  if (shown.length === 0) {
+    list.innerHTML = `<div class="orders-empty">${orderState.filterActive ? 'Sem encomendas ativas' : 'Sem encomendas'}</div>`;
+    return;
+  }
+
+  // Sort: active first, then by date descending
+  const sorted = [...shown].sort((a, b) => {
+    if (isActiveOrder(a) !== isActiveOrder(b)) return isActiveOrder(a) ? -1 : 1;
+    return new Date(b.createdAt) - new Date(a.createdAt);
+  });
+
+  list.innerHTML = sorted.map(order => {
+    const totalLines = order.lines.length;
+    const pickedLines = order.lines.filter(l => l.qtyPicked >= l.qtyOrdered).length;
+    const pct = totalLines > 0 ? Math.round((pickedLines / totalLines) * 100) : 0;
+    const complete = pickedLines === totalLines && totalLines > 0;
+    const date = order.createdAt ? new Date(order.createdAt).toLocaleDateString('pt-PT') : '';
+    const statusInfo = STATUS_LABELS[order.status] || { label: order.status, color: '' };
+
+    return `
+      <button class="order-card" data-order-id="${order.orderId}">
+        <div class="order-card__top">
+          <span class="order-card__id">${order.orderId}</span>
+          <span class="order-card__status" data-status="${order.status}">${statusInfo.label}</span>
+        </div>
+        <div class="order-card__client">${order.clientName || '—'}</div>
+        <div class="order-card__meta">${totalLines} artigo${totalLines !== 1 ? 's' : ''} · ${date}${order.salesperson ? ' · ' + order.salesperson : ''}</div>
+        <div class="order-card__progress">
+          <div class="order-card__progress-bar" data-complete="${complete}" style="width:${pct}%"></div>
+        </div>
+      </button>
+    `;
+  }).join('');
+
+  list.querySelectorAll('.order-card').forEach(card => {
+    card.addEventListener('click', () => openOrderDetail(card.dataset.orderId));
+  });
+}
+
+async function openOrderDetail(orderId) {
+  const order = orderState.orders.find(o => o.orderId === orderId);
+  if (!order) return;
+  orderState.currentOrder = order;
+
+  if (order.status === 'Rascunho') {
+    // Salesperson editing a draft or viewing it — go to pick/detail view
+    renderOrderPick(order, true);
+    setView('order-pick');
+  } else {
+    // Warehouse pick view
+    renderOrderPick(order, false);
+    setView('order-pick');
+  }
+}
+
+// ---------- order create ----------
+function renderOrderCreate() {
+  orderState.newOrderLines = [];
+  orderState.newOrderClient = null;
+
+  const panel = $('#order-create-panel');
+  if (!panel) return;
+
+  const clientOptions = orderState.clients.map(c =>
+    `<option value="${c.id}" data-name="${c.name}">${c.name}</option>`
+  ).join('');
+
+  panel.innerHTML = `
+    <button class="back-btn" id="create-back-btn">‹ Encomendas</button>
+    <div class="order-create">
+      <div class="order-create__section">
+        <div class="order-create__section-title">Cliente</div>
+        <select class="client-select" id="client-select">
+          <option value="">Selecionar cliente…</option>
+          ${clientOptions}
+        </select>
+        <div style="margin-top:8px">
+          <button class="add-item-btn" id="new-client-btn" style="border-style:solid">
+            + Novo cliente
+          </button>
+        </div>
+      </div>
+
+      <div class="order-create__section">
+        <div class="order-create__section-title">Vendedor</div>
+        <input class="order-field" id="salesperson-input" type="text" placeholder="Nome do vendedor" autocomplete="off" />
+      </div>
+
+      <div class="order-create__section">
+        <div class="order-create__section-title">Artigos</div>
+        <div class="order-lines" id="order-lines-list"></div>
+        <button class="add-item-btn" id="add-item-btn">
+          <svg viewBox="0 0 24 24" width="16" height="16"><path d="M12 5v14m-7-7h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>
+          Adicionar artigo
+        </button>
+      </div>
+
+      <div class="order-create__section">
+        <div class="order-create__section-title">Notas</div>
+        <textarea class="order-field" id="order-notes-input" rows="3" placeholder="Notas opcionais…" style="resize:none"></textarea>
+      </div>
+
+      <div class="order-actions">
+        <button class="order-action-btn order-action-btn--draft" id="save-draft-btn">Guardar rascunho</button>
+        <button class="order-action-btn order-action-btn--send" id="send-order-btn">Enviar para armazém</button>
+      </div>
+    </div>
+  `;
+
+  panel.querySelector('#create-back-btn').addEventListener('click', () => setView('orders'));
+  panel.querySelector('#add-item-btn').addEventListener('click', () => showItemSearchOverlay());
+  panel.querySelector('#new-client-btn').addEventListener('click', () => showNewClientForm());
+  panel.querySelector('#save-draft-btn').addEventListener('click', () => submitOrder('Rascunho'));
+  panel.querySelector('#send-order-btn').addEventListener('click', () => submitOrder('Enviado'));
+
+  renderOrderLines();
+}
+
+function renderOrderLines() {
+  const list = $('#order-lines-list');
+  if (!list) return;
+
+  if (orderState.newOrderLines.length === 0) {
+    list.innerHTML = '';
+    return;
+  }
+
+  list.innerHTML = orderState.newOrderLines.map((line, idx) => `
+    <div class="order-line-card" data-idx="${idx}">
+      <div class="order-line-card__sku">${line.sku}</div>
+      <div class="order-line-card__desc">${line.descricao}</div>
+      <div class="order-line-card__dims">${fmtNumber(line.comprimento, 0)}×${fmtNumber(line.largura, 0)}×${fmtNumber(line.espessura, 0)}mm</div>
+      <div class="order-line-card__inputs">
+        <div style="flex:1;min-width:0">
+          <input class="order-line-card__input" type="number" step="any" inputmode="decimal"
+            value="${line.qtyOrdered}" data-field="qty" data-idx="${idx}" placeholder="Qty" />
+          <div class="order-line-card__label">Quantidade</div>
+        </div>
+        <div style="flex:1;min-width:0">
+          <input class="order-line-card__input" type="number" step="any" inputmode="decimal"
+            value="${line.unitPrice}" data-field="price" data-idx="${idx}" placeholder="Preço" />
+          <div class="order-line-card__label">Preço unit.</div>
+        </div>
+        <button class="order-line-card__remove" data-remove="${idx}" type="button">×</button>
+      </div>
+    </div>
+  `).join('');
+
+  list.querySelectorAll('[data-field]').forEach(input => {
+    input.addEventListener('change', () => {
+      const idx = parseInt(input.dataset.idx);
+      const val = parseFloat(input.value) || 0;
+      if (input.dataset.field === 'qty') orderState.newOrderLines[idx].qtyOrdered = val;
+      if (input.dataset.field === 'price') orderState.newOrderLines[idx].unitPrice = val;
+    });
+  });
+
+  list.querySelectorAll('[data-remove]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const idx = parseInt(btn.dataset.remove);
+      orderState.newOrderLines.splice(idx, 1);
+      renderOrderLines();
+    });
+  });
+}
+
+function showItemSearchOverlay() {
+  const app = $('#app');
+  const overlay = document.createElement('div');
+  overlay.className = 'item-search-overlay';
+  overlay.innerHTML = `
+    <div class="item-search-overlay__header">
+      <input class="item-search-overlay__input" id="item-search-input"
+        type="text" placeholder="Pesquisar artigo…" autocomplete="off" autofocus />
+      <button class="item-search-overlay__cancel" id="item-search-cancel">Cancelar</button>
+    </div>
+    <div class="item-search-overlay__results" id="item-search-results"></div>
+  `;
+  app.appendChild(overlay);
+
+  const searchInput = overlay.querySelector('#item-search-input');
+  const results = overlay.querySelector('#item-search-results');
+
+  overlay.querySelector('#item-search-cancel').addEventListener('click', () => overlay.remove());
+
+  function renderResults(q) {
+    const filtered = q
+      ? state.items.filter(i =>
+          i.sku.includes(q) || i.descricao.toLowerCase().includes(q.toLowerCase()) || i.familia.toLowerCase().includes(q.toLowerCase())
+        ).slice(0, 60)
+      : state.items.slice(0, 60);
+
+    results.innerHTML = filtered.map(item => `
+      <button class="browse-row" data-sku="${item.sku}" style="margin-bottom:8px">
+        <div class="browse-row__main">
+          <div class="browse-row__sku">${item.sku} · ${item.familia}</div>
+          <div class="browse-row__desc">${item.descricao}</div>
+          <div class="browse-row__dims">${fmtNumber(item.comprimento, 0)}×${fmtNumber(item.largura, 0)}×${fmtNumber(item.espessura, 0)}mm</div>
+        </div>
+        <div>
+          <span class="browse-row__stock-label">Preço</span>
+          <span class="browse-row__stock">${fmtCurrency(item.preco)}</span>
+        </div>
+      </button>
+    `).join('');
+
+    results.querySelectorAll('.browse-row').forEach(row => {
+      row.addEventListener('click', () => {
+        const item = state.items.find(i => i.sku === row.dataset.sku);
+        if (!item) return;
+        orderState.newOrderLines.push({
+          sku: item.sku,
+          descricao: item.descricao,
+          comprimento: item.comprimento,
+          largura: item.largura,
+          espessura: item.espessura,
+          qtyOrdered: 1,
+          unitPrice: item.preco || 0
+        });
+        overlay.remove();
+        renderOrderLines();
+      });
+    });
+  }
+
+  searchInput.addEventListener('input', e => renderResults(e.target.value));
+  renderResults('');
+  setTimeout(() => searchInput.focus(), 50);
+}
+
+function showNewClientForm() {
+  const app = $('#app');
+  const overlay = document.createElement('div');
+  overlay.className = 'item-search-overlay';
+  overlay.innerHTML = `
+    <div class="item-search-overlay__header">
+      <span style="font-weight:700;font-size:16px;flex:1">Novo cliente</span>
+      <button class="item-search-overlay__cancel" id="client-form-cancel">Cancelar</button>
+    </div>
+    <div style="padding:16px;display:flex;flex-direction:column;gap:10px">
+      <input class="order-field" id="new-client-name" type="text" placeholder="Nome *" autocomplete="off" style="margin:0" />
+      <input class="order-field" id="new-client-address" type="text" placeholder="Morada" autocomplete="off" style="margin:0" />
+      <input class="order-field" id="new-client-phone" type="tel" placeholder="Telefone" autocomplete="off" style="margin:0" />
+      <input class="order-field" id="new-client-email" type="email" placeholder="Email" autocomplete="off" style="margin:0" />
+      <button class="order-action-btn order-action-btn--send" id="new-client-save">Guardar cliente</button>
+    </div>
+  `;
+  $('#app').appendChild(overlay);
+
+  overlay.querySelector('#client-form-cancel').addEventListener('click', () => overlay.remove());
+  overlay.querySelector('#new-client-save').addEventListener('click', async () => {
+    const name = overlay.querySelector('#new-client-name').value.trim();
+    if (!name) { toast('Nome é obrigatório', 'error'); return; }
+    try {
+      const data = await apiPost('/api/clients', {
+        name,
+        address: overlay.querySelector('#new-client-address').value.trim(),
+        phone: overlay.querySelector('#new-client-phone').value.trim(),
+        email: overlay.querySelector('#new-client-email').value.trim()
+      });
+      orderState.clients.push(data.client);
+      overlay.remove();
+      // Re-render the create view so the new client appears in the dropdown
+      renderOrderCreate();
+      toast(`Cliente "${name}" criado`, 'success');
+    } catch (err) {
+      toast('Erro ao criar cliente', 'error');
+    }
+  });
+}
+
+async function submitOrder(targetStatus) {
+  const clientSelect = $('#client-select');
+  const clientId = clientSelect?.value;
+  const clientName = clientSelect?.options[clientSelect.selectedIndex]?.dataset.name || '';
+  const salesperson = $('#salesperson-input')?.value.trim() || '';
+  const orderNotes = $('#order-notes-input')?.value.trim() || '';
+
+  if (!clientId) { toast('Selecione um cliente', 'error'); return; }
+  if (orderState.newOrderLines.length === 0) { toast('Adicione pelo menos um artigo', 'error'); return; }
+
+  const sendBtn = $('#send-order-btn');
+  const draftBtn = $('#save-draft-btn');
+  if (sendBtn) sendBtn.disabled = true;
+  if (draftBtn) draftBtn.disabled = true;
+
+  try {
+    const data = await apiPost('/api/orders', {
+      clientId, clientName, salesperson, orderNotes,
+      lines: orderState.newOrderLines
+    });
+
+    // If target is Enviado, update status right away
+    if (targetStatus === 'Enviado') {
+      await apiPatch('/api/orders', { orderId: data.order.orderId, status: 'Enviado' });
+    }
+
+    await loadOrders({ silent: true });
+    renderOrdersList();
+    setView('orders');
+    toast(targetStatus === 'Enviado' ? 'Encomenda enviada para armazém' : 'Rascunho guardado', 'success');
+  } catch (err) {
+    toast('Erro ao criar encomenda: ' + err.message, 'error');
+    if (sendBtn) sendBtn.disabled = false;
+    if (draftBtn) draftBtn.disabled = false;
+  }
+}
+
+// ---------- order pick view ----------
+function renderOrderPick(order, isDraft) {
+  const panel = $('#order-pick-panel');
+  if (!panel) return;
+
+  const allPicked = order.lines.every(l => l.qtyPicked >= l.qtyOrdered);
+  const pickedCount = order.lines.filter(l => l.qtyPicked >= l.qtyOrdered).length;
+
+  panel.innerHTML = `
+    <button class="back-btn" id="pick-back-btn">‹ Encomendas</button>
+    <div class="order-pick">
+      <div class="order-pick__header">
+        <div class="order-pick__id">${order.orderId} · <span style="color:var(--paper-dim)">${order.status}</span></div>
+        <div class="order-pick__client">${order.clientName}</div>
+        ${order.orderNotes ? `<div style="font-size:13px;color:var(--paper-dim);margin-top:4px">${order.orderNotes}</div>` : ''}
+        <div class="order-pick__progress-row">
+          <span class="order-pick__progress-label">${pickedCount} de ${order.lines.length} separados</span>
+          ${!isDraft && order.status === 'Enviado' ? `<button class="orders-filter-btn active" id="start-picking-btn">Iniciar separação</button>` : ''}
+        </div>
+      </div>
+
+      <div class="pick-lines">
+        ${order.lines.map(line => {
+          const done = line.qtyPicked >= line.qtyOrdered;
+          return `
+            <div class="pick-line" data-sku="${line.sku}" data-done="${done}">
+              <div class="pick-line__top">
+                <span class="pick-line__sku">${line.sku}</span>
+                <span class="pick-line__qty-badge" data-done="${done}">${line.qtyPicked}/${line.qtyOrdered}</span>
+              </div>
+              <div class="pick-line__desc">${line.descricao}</div>
+              <div class="pick-line__dims">${fmtNumber(line.comprimento, 0)}×${fmtNumber(line.largura, 0)}×${fmtNumber(line.espessura, 0)}mm · ${fmtCurrency(line.unitPrice)}/un</div>
+              ${!isDraft && order.status !== 'Rascunho' ? `
+                <div class="pick-line__actions">
+                  <input class="pick-line__qty-input" type="number" step="any" inputmode="decimal"
+                    value="${line.qtyOrdered - line.qtyPicked}" min="0" max="${line.qtyOrdered}" />
+                  <button class="pick-line__confirm-btn" data-done="${done}" ${done ? 'disabled' : ''}>
+                    ${done ? '✓ Separado' : 'Confirmar'}
+                  </button>
+                </div>
+              ` : ''}
+            </div>
+          `;
+        }).join('')}
+      </div>
+
+      <div class="pick-complete-banner" data-show="${allPicked && !isDraft}">
+        <div class="pick-complete-banner__title">✓ Todos os artigos separados</div>
+        <button class="pick-complete-btn" id="complete-order-btn">Concluir encomenda</button>
+      </div>
+    </div>
+  `;
+
+  panel.querySelector('#pick-back-btn').addEventListener('click', () => {
+    setView('orders');
+    renderOrdersList();
+  });
+
+  const startBtn = panel.querySelector('#start-picking-btn');
+  if (startBtn) {
+    startBtn.addEventListener('click', async () => {
+      try {
+        await apiPatch('/api/orders', { orderId: order.orderId, status: 'Em separação' });
+        await loadOrders({ silent: true });
+        const updated = orderState.orders.find(o => o.orderId === order.orderId);
+        if (updated) renderOrderPick(updated, false);
+        toast('Separação iniciada', 'success');
+      } catch (err) {
+        toast('Erro: ' + err.message, 'error');
+      }
+    });
+  }
+
+  // Wire pick confirm buttons
+  panel.querySelectorAll('.pick-line').forEach(lineEl => {
+    const sku = lineEl.dataset.sku;
+    const confirmBtn = lineEl.querySelector('.pick-line__confirm-btn');
+    const qtyInput = lineEl.querySelector('.pick-line__qty-input');
+    if (!confirmBtn || !qtyInput) return;
+
+    confirmBtn.addEventListener('click', async () => {
+      const qty = parseFloat(qtyInput.value) || 0;
+      if (qty <= 0) { toast('Quantidade inválida', 'error'); return; }
+
+      confirmBtn.textContent = 'A guardar…';
+      confirmBtn.disabled = true;
+
+      try {
+        await apiPost('/api/pick-line', { orderId: order.orderId, sku, qtyPicked: qty });
+        // Refresh order and re-render
+        const data = await apiGet(`/api/orders?id=${order.orderId}`);
+        orderState.currentOrder = data.order;
+        // Update in list
+        const idx = orderState.orders.findIndex(o => o.orderId === order.orderId);
+        if (idx !== -1) orderState.orders[idx] = data.order;
+        renderOrderPick(data.order, false);
+        toast('Separado', 'success');
+      } catch (err) {
+        toast('Erro: ' + err.message, 'error');
+        confirmBtn.textContent = 'Confirmar';
+        confirmBtn.disabled = false;
+      }
+    });
+  });
+
+  const completeBtn = panel.querySelector('#complete-order-btn');
+  if (completeBtn) {
+    completeBtn.addEventListener('click', async () => {
+      completeBtn.textContent = 'A concluir…';
+      completeBtn.disabled = true;
+      try {
+        await apiPatch('/api/orders', { orderId: order.orderId, status: 'Concluído' });
+        await loadOrders({ silent: true });
+        renderOrdersList();
+        setView('orders');
+        toast('Encomenda concluída', 'success');
+      } catch (err) {
+        toast('Erro: ' + err.message, 'error');
+        completeBtn.textContent = 'Concluir encomenda';
+        completeBtn.disabled = false;
+      }
+    });
+  }
+}
+
 // ---------- wiring ----------
 function init() {
   $$('.tabbar__btn').forEach((btn) => {
     btn.addEventListener('click', () => {
-      setView(btn.dataset.goto);
-      if (btn.dataset.goto === 'browse') renderBrowseList($('#browse-search').value);
+      const target = btn.dataset.goto;
+      setView(target);
+      if (target === 'browse') renderBrowseList($('#browse-search').value);
+      if (target === 'orders') {
+        loadOrders().then(() => renderOrdersList());
+      }
+    });
+  });
+
+  $('#new-order-btn').addEventListener('click', async () => {
+    if (orderState.clients.length === 0) {
+      await loadOrders({ silent: true });
+    }
+    renderOrderCreate();
+    setView('order-create');
+  });
+
+  $$('.orders-filter-btn[data-filter]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      $$('.orders-filter-btn[data-filter]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      orderState.filterActive = btn.dataset.filter === 'active';
+      renderOrdersList();
     });
   });
 
