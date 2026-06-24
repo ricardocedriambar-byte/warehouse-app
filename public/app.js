@@ -129,7 +129,7 @@ function renderItemDetail(item) {
       <div class="field-card" id="stock-card">
         <div class="field-card__top">
           <span class="field-card__label">Stock</span>
-          <span class="field-card__current" data-low="${low}">${fmtNumber(item.stock, 3)}</span>
+          <span class="field-card__current" data-low="${low}">${fmtNumber(item.stock, 3)} ${item.unidade || 'un'}</span>
         </div>
         <div class="stepper">
           <button class="stepper__btn" data-step="-1" type="button">−</button>
@@ -151,6 +151,20 @@ function renderItemDetail(item) {
         </div>
         <button class="field-card__save" id="preco-save" type="button">Guardar preço</button>
       </div>
+
+      <div class="field-card" id="unidade-card">
+        <div class="field-card__top">
+          <span class="field-card__label">Unidade de venda</span>
+          <span class="field-card__current" style="font-size:18px">${item.unidade || 'un'}</span>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          ${['un', 'm²', 'ml', 'm³', 'lt'].map(u => `
+            <button class="unidade-btn ${(item.unidade || 'un') === u ? 'unidade-btn--active' : ''}"
+              data-unidade="${u}" type="button">${u}</button>
+          `).join('')}
+        </div>
+        <button class="field-card__save" id="unidade-save" type="button">Guardar unidade</button>
+      </div>
     </div>
 
     <div class="purchase-note">
@@ -162,6 +176,22 @@ function renderItemDetail(item) {
   root.querySelector('[data-goto]').addEventListener('click', () => setView('scan'));
   wireFieldCard(root, 'stock', item.stock, (val) => saveField('stock', val));
   wireFieldCard(root, 'preco', item.preco, (val) => saveField('preco', val));
+
+  // Wire unidade selector buttons
+  let selectedUnidade = item.unidade || 'un';
+  const unidadeSaveBtn = root.querySelector('#unidade-save');
+  root.querySelectorAll('.unidade-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      root.querySelectorAll('.unidade-btn').forEach(b => b.classList.remove('unidade-btn--active'));
+      btn.classList.add('unidade-btn--active');
+      selectedUnidade = btn.dataset.unidade;
+      unidadeSaveBtn.dataset.dirty = String(selectedUnidade !== (item.unidade || 'un'));
+    });
+  });
+  unidadeSaveBtn.addEventListener('click', async () => {
+    unidadeSaveBtn.textContent = 'A guardar…';
+    await saveField('unidade', selectedUnidade);
+  });
 }
 
 function wireFieldCard(root, key, initialValue, onSave) {
@@ -200,7 +230,9 @@ async function saveField(field, value) {
   if (!item) return;
 
   const body = { rowNumber: item.rowNumber, sku: item.sku };
-  body[field === 'stock' ? 'stock' : 'preco'] = value;
+  if (field === 'stock') body.stock = value;
+  else if (field === 'preco') body.preco = value;
+  else if (field === 'unidade') body.unidade = value;
 
   try {
     const res = await fetch('/api/update-item', {

@@ -411,10 +411,23 @@ input { font-family: var(--font-mono); }
 .toast[data-kind="error"] { background: var(--red); color: var(--paper); }
 .toast[data-kind="success"] { background: var(--green); color: var(--ink); }
 
-@media (prefers-reduced-motion: reduce) {
-  .topbar__refresh.spinning svg { animation: none; }
-  .toast { transition: none; }
+.unidade-btn {
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  color: var(--paper-dim);
+  border-radius: var(--radius);
+  padding: 10px 16px;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 600;
 }
+.unidade-btn--active {
+  background: var(--timber-bright);
+  border-color: var(--timber-bright);
+  color: var(--ink);
+}
+.unidade-btn:active { opacity: 0.7; }
+
 
 /* ===== Orders list view ===== */
 .orders-header {

@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="pt">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Importar Clientes — Cedriambar</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #0d120e; color: #f3efe6; margin: 0; padding: 24px; }
+    h1 { font-size: 20px; margin-bottom: 4px; }
+    p { color: #aab3a4; font-size: 14px; margin-bottom: 24px; }
+    .card { background: #1f1c17; border: 1px solid #313f2f; border-radius: 8px; padding: 24px; max-width: 480px; }
+    label { display: block; font-size: 13px; color: #aab3a4; margin-bottom: 8px; }
+    input[type=file] { width: 100%; background: #0d120e; border: 1px solid #313f2f; color: #f3efe6; border-radius: 4px; padding: 10px; font-size: 14px; box-sizing: border-box; }
+    button { margin-top: 16px; width: 100%; background: #b87b3f; color: #0d120e; border: none; border-radius: 4px; padding: 14px; font-weight: 700; font-size: 15px; cursor: pointer; }
+    button:disabled { opacity: 0.5; cursor: default; }
+    .result { margin-top: 16px; padding: 14px; border-radius: 6px; font-size: 14px; display: none; }
+    .result.ok { background: #1a3320; border: 1px solid #6f9e5c; color: #6f9e5c; display: block; }
+    .result.error { background: #3a1a1a; border: 1px solid #c9594a; color: #c9594a; display: block; }
+    .warning { background: #3a2a00; border: 1px solid #b87b3f; border-radius: 6px; padding: 12px 14px; font-size: 13px; color: #b87b3f; margin-bottom: 16px; }
+  </style>
+</head>
+<body>
+  <h1>Importar Clientes</h1>
+  <p>Ferramenta de importação única para o ficheiro CLIENTES.csv do software DOS.</p>
+
+  <div class="card">
+    <div class="warning">
+      ⚠️ Esta ferramenta <strong>acrescenta</strong> clientes ao separador Clientes — não apaga os existentes.
+      Se quiser recomeçar, limpe o separador Clientes na Google Sheet primeiro.
+    </div>
+
+    <label>Selecione o ficheiro CLIENTES.csv</label>
+    <input type="file" id="csv-file" accept=".csv,.txt" />
+
+    <button id="import-btn" disabled>Importar clientes</button>
+    <div class="result" id="result"></div>
+  </div>
+
+  <script>
+    const fileInput = document.getElementById('csv-file');
+    const importBtn = document.getElementById('import-btn');
+    const result = document.getElementById('result');
+
+    fileInput.addEventListener('change', () => {
+      importBtn.disabled = !fileInput.files[0];
+    });
+
+    importBtn.addEventListener('click', async () => {
+      const file = fileInput.files[0];
+      if (!file) return;
+
+      importBtn.disabled = true;
+      importBtn.textContent = 'A importar…';
+      result.className = 'result';
+      result.textContent = '';
+
+      try {
+        // Read as latin-1 (DOS Portuguese encoding)
+        const buffer = await file.arrayBuffer();
+        const decoder = new TextDecoder('iso-8859-1');
+        const csv = decoder.decode(buffer);
+
+        const res = await fetch('/api/import-clients', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ csv })
+        });
+
+        const data = await res.json();
+
+        if (res.ok && data.ok) {
+          result.className = 'result ok';
+          result.textContent = `✓ ${data.message}`;
+        } else {
+          result.className = 'result error';
+          result.textContent = `Erro: ${data.error || 'Resposta inesperada'}`;
+        }
+      } catch (err) {
+        result.className = 'result error';
+        result.textContent = `Erro: ${err.message}`;
+      }
+
+      importBtn.disabled = false;
+      importBtn.textContent = 'Importar clientes';
+    });
+  </script>
+</body>
+</html>
