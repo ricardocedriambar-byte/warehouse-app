@@ -155,15 +155,16 @@ function renderItemDetail(item) {
       <div class="field-card" id="unidade-card">
         <div class="field-card__top">
           <span class="field-card__label">Unidade de venda</span>
-          <span class="field-card__current" style="font-size:18px">${item.unidade || 'un'}</span>
+          <span class="field-card__current" style="font-size:18px">${item.unidade || '—'}</span>
         </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          ${['un', 'm²', 'ml', 'm³', 'lt'].map(u => `
-            <button class="unidade-btn ${(item.unidade || 'un') === u ? 'unidade-btn--active' : ''}"
-              data-unidade="${u}" type="button">${u}</button>
-          `).join('')}
-        </div>
-        <button class="field-card__save" id="unidade-save" type="button">Guardar unidade</button>
+        ${!item.unidade ? `
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            ${['un', 'm²', 'ml', 'm³', 'lt'].map(u => `
+              <button class="unidade-btn" data-unidade="${u}" type="button">${u}</button>
+            `).join('')}
+          </div>
+          <button class="field-card__save" id="unidade-save" type="button">Guardar unidade</button>
+        ` : `<div style="font-size:12px;color:var(--paper-dim);font-family:var(--font-mono)">Para alterar, edite diretamente na Sheet.</div>`}
       </div>
     </div>
 
@@ -177,21 +178,26 @@ function renderItemDetail(item) {
   wireFieldCard(root, 'stock', item.stock, (val) => saveField('stock', val));
   wireFieldCard(root, 'preco', item.preco, (val) => saveField('preco', val));
 
-  // Wire unidade selector buttons
-  let selectedUnidade = item.unidade || 'un';
+  // Unidade buttons only render when no unit is set yet
+  let selectedUnidade = '';
   const unidadeSaveBtn = root.querySelector('#unidade-save');
-  root.querySelectorAll('.unidade-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      root.querySelectorAll('.unidade-btn').forEach(b => b.classList.remove('unidade-btn--active'));
-      btn.classList.add('unidade-btn--active');
-      selectedUnidade = btn.dataset.unidade;
-      unidadeSaveBtn.dataset.dirty = String(selectedUnidade !== (item.unidade || 'un'));
+  if (unidadeSaveBtn) {
+    root.querySelectorAll('.unidade-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        root.querySelectorAll('.unidade-btn').forEach(b => b.classList.remove('unidade-btn--active'));
+        btn.classList.add('unidade-btn--active');
+        selectedUnidade = btn.dataset.unidade;
+        unidadeSaveBtn.dataset.dirty = 'true';
+        const current = root.querySelector('#unidade-card .field-card__current');
+        if (current) current.textContent = selectedUnidade;
+      });
     });
-  });
-  unidadeSaveBtn.addEventListener('click', async () => {
-    unidadeSaveBtn.textContent = 'A guardar…';
-    await saveField('unidade', selectedUnidade);
-  });
+    unidadeSaveBtn.addEventListener('click', async () => {
+      if (!selectedUnidade) { toast('Selecione uma unidade', 'error'); return; }
+      unidadeSaveBtn.textContent = 'A guardar…';
+      await saveField('unidade', selectedUnidade);
+    });
+  }
 }
 
 function wireFieldCard(root, key, initialValue, onSave) {
@@ -747,12 +753,12 @@ function renderOrderLines() {
         <div style="flex:1;min-width:0">
           <input class="order-line-card__input" type="number" step="any" inputmode="decimal"
             value="${line.qtyOrdered}" data-field="qty" data-idx="${idx}" placeholder="Qty" />
-          <div class="order-line-card__label">Quantidade</div>
+          <div class="order-line-card__label">Qtd (${line.unidade || 'un'})</div>
         </div>
         <div style="flex:1;min-width:0">
           <input class="order-line-card__input" type="number" step="any" inputmode="decimal"
             value="${line.unitPrice}" data-field="price" data-idx="${idx}" placeholder="Preço" />
-          <div class="order-line-card__label">Preço unit.</div>
+          <div class="order-line-card__label">€/${line.unidade || 'un'}</div>
         </div>
         <button class="order-line-card__remove" data-remove="${idx}" type="button">×</button>
       </div>
@@ -827,6 +833,7 @@ function showItemSearchOverlay() {
           comprimento: item.comprimento,
           largura: item.largura,
           espessura: item.espessura,
+          unidade: item.unidade || 'un',
           qtyOrdered: 1,
           unitPrice: item.preco || 0
         });
@@ -959,7 +966,7 @@ function renderOrderPick(order, isDraft) {
                 <span class="pick-line__qty-badge" data-done="${done}">${line.qtyPicked}/${line.qtyOrdered}</span>
               </div>
               <div class="pick-line__desc">${line.descricao}</div>
-              <div class="pick-line__dims">${fmtNumber(line.comprimento, 0)}×${fmtNumber(line.largura, 0)}×${fmtNumber(line.espessura, 0)}mm · ${fmtCurrency(line.unitPrice)}/un</div>
+              <div class="pick-line__dims">${fmtNumber(line.comprimento, 0)}×${fmtNumber(line.largura, 0)}×${fmtNumber(line.espessura, 0)}mm · ${fmtCurrency(line.unitPrice)}/${line.unidade || 'un'}</div>
               ${!isDraft && order.status !== 'Rascunho' ? `
                 <div class="pick-line__actions">
                   <input class="pick-line__qty-input" type="number" step="any" inputmode="decimal"
