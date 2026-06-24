@@ -142,29 +142,24 @@ function renderItemDetail(item) {
       <div class="field-card" id="preco-card">
         <div class="field-card__top">
           <span class="field-card__label">Preço de venda</span>
-          <span class="field-card__current">${fmtCurrency(item.preco)}</span>
+          <span class="field-card__current">${fmtCurrency(item.preco)}${item.unidade ? `/${item.unidade}` : ''}</span>
         </div>
+        ${!item.unidade ? `
+          <div style="margin-bottom:10px">
+            <div style="font-family:var(--font-mono);font-size:11px;color:var(--paper-dim);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px">Unidade de venda</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap" id="unidade-btns">
+              ${['un', 'm²', 'ml', 'm³', 'lt'].map(u => `
+                <button class="unidade-btn" data-unidade="${u}" type="button">${u}</button>
+              `).join('')}
+            </div>
+          </div>
+        ` : ''}
         <div class="stepper">
           <button class="stepper__btn" data-step="-0.5" type="button">−</button>
           <input class="stepper__input" id="preco-input" type="number" step="any" value="${item.preco ?? 0}" inputmode="decimal" />
           <button class="stepper__btn" data-step="0.5" type="button">+</button>
         </div>
         <button class="field-card__save" id="preco-save" type="button">Guardar preço</button>
-      </div>
-
-      <div class="field-card" id="unidade-card">
-        <div class="field-card__top">
-          <span class="field-card__label">Unidade de venda</span>
-          <span class="field-card__current" style="font-size:18px">${item.unidade || '—'}</span>
-        </div>
-        ${!item.unidade ? `
-          <div style="display:flex;gap:8px;flex-wrap:wrap">
-            ${['un', 'm²', 'ml', 'm³', 'lt'].map(u => `
-              <button class="unidade-btn" data-unidade="${u}" type="button">${u}</button>
-            `).join('')}
-          </div>
-          <button class="field-card__save" id="unidade-save" type="button">Guardar unidade</button>
-        ` : `<div style="font-size:12px;color:var(--paper-dim);font-family:var(--font-mono)">Para alterar, edite diretamente na Sheet.</div>`}
       </div>
     </div>
 
@@ -178,24 +173,27 @@ function renderItemDetail(item) {
   wireFieldCard(root, 'stock', item.stock, (val) => saveField('stock', val));
   wireFieldCard(root, 'preco', item.preco, (val) => saveField('preco', val));
 
-  // Unidade buttons only render when no unit is set yet
-  let selectedUnidade = '';
+  // Unidade buttons only appear when unit isn't set yet — tap saves immediately
+  root.querySelectorAll('.unidade-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const unit = btn.dataset.unidade;
+      // Hide the whole unit selector row instantly
+      const btnsWrap = root.querySelector('#unidade-btns')?.parentElement;
+      if (btnsWrap) btnsWrap.style.display = 'none';
+      // Update the price label to show the unit
+      const precoLabel = root.querySelector('#preco-card .field-card__current');
+      if (precoLabel) precoLabel.textContent = `${fmtCurrency(item.preco)}/${unit}`;
+      // Save silently
+      await saveField('unidade', unit);
+    });
+  });
+
+  // Unidade wiring (legacy save button path — no longer rendered but kept for safety)
   const unidadeSaveBtn = root.querySelector('#unidade-save');
   if (unidadeSaveBtn) {
-    root.querySelectorAll('.unidade-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        root.querySelectorAll('.unidade-btn').forEach(b => b.classList.remove('unidade-btn--active'));
-        btn.classList.add('unidade-btn--active');
-        selectedUnidade = btn.dataset.unidade;
-        unidadeSaveBtn.dataset.dirty = 'true';
-        const current = root.querySelector('#unidade-card .field-card__current');
-        if (current) current.textContent = selectedUnidade;
-      });
-    });
     unidadeSaveBtn.addEventListener('click', async () => {
-      if (!selectedUnidade) { toast('Selecione uma unidade', 'error'); return; }
       unidadeSaveBtn.textContent = 'A guardar…';
-      await saveField('unidade', selectedUnidade);
+      await saveField('unidade', root.querySelector('.unidade-btn--active')?.dataset.unidade || '');
     });
   }
 }
