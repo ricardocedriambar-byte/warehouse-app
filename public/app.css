@@ -411,7 +411,35 @@ input { font-family: var(--font-mono); }
 .toast[data-kind="error"] { background: var(--red); color: var(--paper); }
 .toast[data-kind="success"] { background: var(--green); color: var(--ink); }
 
-.unidade-btn {
+.client-search-wrap { position: relative; }
+.client-search-results {
+  position: absolute; top: 100%; left: 0; right: 0; z-index: 10;
+  background: var(--surface);
+  border: 1px solid var(--timber-bright);
+  border-top: none;
+  border-radius: 0 0 var(--radius) var(--radius);
+  max-height: 240px; overflow-y: auto;
+}
+.client-result-row {
+  display: flex; flex-direction: column; gap: 2px;
+  width: 100%; text-align: left;
+  background: none; border: none;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+  color: var(--paper);
+}
+.client-result-row:last-child { border-bottom: none; }
+.client-result-row:active { background: var(--surface-raised); }
+.client-result-name { font-size: 14px; font-weight: 600; }
+.client-result-meta { font-family: var(--font-mono); font-size: 11px; color: var(--paper-dim); }
+.client-selected {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--surface);
+  border: 1px solid var(--timber-bright);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+}
+
   background: var(--surface-raised);
   border: 1px solid var(--line);
   color: var(--paper-dim);

@@ -611,19 +611,17 @@ function renderOrderCreate() {
   const panel = $('#order-create-panel');
   if (!panel) return;
 
-  const clientOptions = orderState.clients.map(c =>
-    `<option value="${c.id}" data-name="${c.name}">${c.name}</option>`
-  ).join('');
-
   panel.innerHTML = `
     <button class="back-btn" id="create-back-btn">‹ Encomendas</button>
     <div class="order-create">
       <div class="order-create__section">
         <div class="order-create__section-title">Cliente</div>
-        <select class="client-select" id="client-select">
-          <option value="">Selecionar cliente…</option>
-          ${clientOptions}
-        </select>
+        <div class="client-search-wrap">
+          <input class="order-field" id="client-search-input" type="text"
+            placeholder="Pesquisar cliente…" autocomplete="off" style="margin:0" />
+          <div class="client-search-results" id="client-search-results" style="display:none"></div>
+          <div class="client-selected" id="client-selected" style="display:none"></div>
+        </div>
         <div style="margin-top:8px">
           <button class="add-item-btn" id="new-client-btn" style="border-style:solid">
             + Novo cliente
@@ -663,7 +661,72 @@ function renderOrderCreate() {
   panel.querySelector('#save-draft-btn').addEventListener('click', () => submitOrder('Rascunho'));
   panel.querySelector('#send-order-btn').addEventListener('click', () => submitOrder('Enviado'));
 
+  // Wire client search
+  wireClientSearch(panel);
   renderOrderLines();
+}
+
+function wireClientSearch(root) {
+  const input = root.querySelector('#client-search-input');
+  const results = root.querySelector('#client-search-results');
+  const selected = root.querySelector('#client-selected');
+
+  function selectClient(client) {
+    orderState.newOrderClient = client;
+    input.style.display = 'none';
+    results.style.display = 'none';
+    selected.style.display = 'flex';
+    selected.innerHTML = `
+      <span style="flex:1;font-size:15px;font-weight:600">${client.name}</span>
+      <button class="order-line-card__remove" id="clear-client-btn" type="button" style="font-size:14px;width:auto;padding:0 10px">Alterar</button>
+    `;
+    selected.querySelector('#clear-client-btn').addEventListener('click', () => {
+      orderState.newOrderClient = null;
+      input.style.display = '';
+      input.value = '';
+      selected.style.display = 'none';
+      results.style.display = 'none';
+      input.focus();
+    });
+  }
+
+  function renderResults(q) {
+    if (!q || q.length < 1) { results.style.display = 'none'; return; }
+    const filtered = orderState.clients
+      .filter(c => c.name.toLowerCase().includes(q.toLowerCase()) ||
+                   c.id.toLowerCase().includes(q.toLowerCase()) ||
+                   (c.phone && c.phone.includes(q)))
+      .slice(0, 10);
+
+    if (filtered.length === 0) {
+      results.style.display = 'none';
+      return;
+    }
+
+    results.style.display = 'block';
+    results.innerHTML = filtered.map(c => `
+      <button class="client-result-row" data-id="${c.id}" type="button">
+        <span class="client-result-name">${c.name}</span>
+        <span class="client-result-meta">${c.id}${c.phone ? ' · ' + c.phone : ''}</span>
+      </button>
+    `).join('');
+
+    results.querySelectorAll('.client-result-row').forEach(row => {
+      row.addEventListener('click', () => {
+        const client = orderState.clients.find(c => c.id === row.dataset.id);
+        if (client) selectClient(client);
+      });
+    });
+  }
+
+  input.addEventListener('input', e => renderResults(e.target.value));
+  input.addEventListener('focus', e => renderResults(e.target.value));
+  // Hide results when clicking outside
+  document.addEventListener('click', e => {
+    if (!root.querySelector('.client-search-wrap').contains(e.target)) {
+      results.style.display = 'none';
+    }
+  }, { once: false });
 }
 
 function renderOrderLines() {
@@ -820,13 +883,11 @@ function showNewClientForm() {
 }
 
 async function submitOrder(targetStatus) {
-  const clientSelect = $('#client-select');
-  const clientId = clientSelect?.value;
-  const clientName = clientSelect?.options[clientSelect.selectedIndex]?.dataset.name || '';
+  const client = orderState.newOrderClient;
   const salesperson = $('#salesperson-input')?.value.trim() || '';
   const orderNotes = $('#order-notes-input')?.value.trim() || '';
 
-  if (!clientId) { toast('Selecione um cliente', 'error'); return; }
+  if (!client) { toast('Selecione um cliente', 'error'); return; }
   if (orderState.newOrderLines.length === 0) { toast('Adicione pelo menos um artigo', 'error'); return; }
 
   const sendBtn = $('#send-order-btn');
@@ -836,7 +897,7 @@ async function submitOrder(targetStatus) {
 
   try {
     const data = await apiPost('/api/orders', {
-      clientId, clientName, salesperson, orderNotes,
+      clientId: client.id, clientName: client.name, salesperson, orderNotes,
       lines: orderState.newOrderLines
     });
 
@@ -877,6 +938,17 @@ function renderOrderPick(order, isDraft) {
         </div>
       </div>
 
+      ${isDraft ? `
+        <div style="margin-bottom:16px;display:flex;gap:8px">
+          <button class="order-action-btn order-action-btn--send" id="draft-send-btn" style="flex:2">
+            Enviar para armazém
+          </button>
+          <button class="order-action-btn order-action-btn--draft" id="draft-cancel-btn" style="flex:1">
+            Cancelar
+          </button>
+        </div>
+      ` : ''}
+
       <div class="pick-lines">
         ${order.lines.map(line => {
           const done = line.qtyPicked >= line.qtyOrdered;
@@ -913,6 +985,42 @@ function renderOrderPick(order, isDraft) {
     setView('orders');
     renderOrdersList();
   });
+
+  // Draft-specific actions: send to warehouse or cancel
+  const draftSendBtn = panel.querySelector('#draft-send-btn');
+  if (draftSendBtn) {
+    draftSendBtn.addEventListener('click', async () => {
+      draftSendBtn.textContent = 'A enviar…';
+      draftSendBtn.disabled = true;
+      try {
+        await apiPatch('/api/orders', { orderId: order.orderId, status: 'Enviado' });
+        await loadOrders({ silent: true });
+        const updated = orderState.orders.find(o => o.orderId === order.orderId);
+        if (updated) renderOrderPick(updated, false);
+        toast('Encomenda enviada para armazém', 'success');
+      } catch (err) {
+        toast('Erro: ' + err.message, 'error');
+        draftSendBtn.textContent = 'Enviar para armazém';
+        draftSendBtn.disabled = false;
+      }
+    });
+  }
+
+  const draftCancelBtn = panel.querySelector('#draft-cancel-btn');
+  if (draftCancelBtn) {
+    draftCancelBtn.addEventListener('click', async () => {
+      if (!confirm('Cancelar esta encomenda?')) return;
+      try {
+        await apiPatch('/api/orders', { orderId: order.orderId, status: 'Cancelado' });
+        await loadOrders({ silent: true });
+        renderOrdersList();
+        setView('orders');
+        toast('Encomenda cancelada', 'default');
+      } catch (err) {
+        toast('Erro: ' + err.message, 'error');
+      }
+    });
+  }
 
   const startBtn = panel.querySelector('#start-picking-btn');
   if (startBtn) {
