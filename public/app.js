@@ -782,13 +782,20 @@ function renderOrderLines() {
 }
 
 function showItemSearchOverlay() {
+  // Make sure items are loaded before showing the overlay
+  if (state.items.length === 0) {
+    loadAllItems().then(() => showItemSearchOverlay());
+    toast('A carregar artigos…', 'default');
+    return;
+  }
+
   const app = $('#app');
   const overlay = document.createElement('div');
   overlay.className = 'item-search-overlay';
   overlay.innerHTML = `
     <div class="item-search-overlay__header">
       <input class="item-search-overlay__input" id="item-search-input"
-        type="text" placeholder="Pesquisar artigo…" autocomplete="off" autofocus />
+        type="text" placeholder="Pesquisar SKU ou descrição…" autocomplete="off" autofocus />
       <button class="item-search-overlay__cancel" id="item-search-cancel">Cancelar</button>
     </div>
     <div class="item-search-overlay__results" id="item-search-results"></div>
@@ -801,9 +808,13 @@ function showItemSearchOverlay() {
   overlay.querySelector('#item-search-cancel').addEventListener('click', () => overlay.remove());
 
   function renderResults(q) {
-    const filtered = q
+    const ql = (q || '').toLowerCase().trim();
+    const filtered = ql
       ? state.items.filter(i =>
-          i.sku.includes(q) || i.descricao.toLowerCase().includes(q.toLowerCase()) || i.familia.toLowerCase().includes(q.toLowerCase())
+          i.sku.includes(ql) ||                          // exact SKU fragment
+          i.sku.replace(/^0+/, '').includes(ql) ||        // SKU without leading zeros
+          i.descricao.toLowerCase().includes(ql) ||
+          i.familia.toLowerCase().includes(ql)
         ).slice(0, 60)
       : state.items.slice(0, 60);
 
