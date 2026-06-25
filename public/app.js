@@ -735,6 +735,25 @@ function wireClientSearch(root) {
   }, { once: false });
 }
 
+// Returns quantity in the product's base unit regardless of entry mode.
+function baseQty(line) {
+  if (line.unidade === 'm²' && line.dimensaoM2 && (line.qtyMode || 'un') === 'm²') {
+    return (line.qtyOrdered || 0) / line.dimensaoM2;
+  }
+  return line.qtyOrdered || 0;
+}
+
+// Total = base m² × pricePerM2 for m² products, qty × price for others.
+function calcLineTotal(line) {
+  const price = line.unitPrice || 0;
+  if (line.unidade === 'm²' && line.dimensaoM2) {
+    const qty = line.qtyOrdered || 0;
+    const m2 = (line.qtyMode || 'un') === 'un' ? qty * line.dimensaoM2 : qty;
+    return m2 * price;
+  }
+  return (line.qtyOrdered || 0) * price;
+}
+
 function renderOrderLines() {
   const list = $('#order-lines-list');
   if (!list) return;
@@ -745,29 +764,40 @@ function renderOrderLines() {
   }
 
   list.innerHTML = orderState.newOrderLines.map((line, idx) => {
-    const total = (line.qtyOrdered || 0) * (line.unitPrice || 0);
-    const units = ['un', 'm²', 'ml', 'm³', 'lt'];
+    const isM2 = line.unidade === 'm²' && line.dimensaoM2;
+    const qtyMode = line.qtyMode || 'un';
+    const total = calcLineTotal(line);
+    const m2equiv = isM2 && qtyMode === 'un'
+      ? ` = ${fmtNumber((line.qtyOrdered || 0) * line.dimensaoM2, 3)} m²`
+      : isM2 && qtyMode === 'm²'
+      ? ` = ${fmtNumber((line.qtyOrdered || 0) / line.dimensaoM2, 2)} un`
+      : '';
+
     return `
     <div class="order-line-card" data-idx="${idx}">
       <div class="order-line-card__sku">${line.sku}</div>
       <div class="order-line-card__desc">${line.descricao}</div>
-      <div class="order-line-card__dims">${fmtNumber(line.comprimento, 0)}×${fmtNumber(line.largura, 0)}×${fmtNumber(line.espessura, 0)}mm</div>
-      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
-        ${units.map(u => `
-          <button class="unidade-btn ${(line.unidade || 'un') === u ? 'unidade-btn--active' : ''}"
-            data-unit="${u}" data-idx="${idx}" type="button" style="padding:6px 12px;font-size:12px">${u}</button>
-        `).join('')}
-      </div>
+      <div class="order-line-card__dims">${fmtNumber(line.comprimento, 0)}×${fmtNumber(line.largura, 0)}×${fmtNumber(line.espessura, 0)}mm${isM2 ? ` · ${fmtNumber(line.dimensaoM2, 3)} m²/un` : ''}</div>
       <div class="order-line-card__inputs">
-        <div style="flex:1;min-width:0">
-          <input class="order-line-card__input" type="number" step="any" inputmode="decimal"
-            value="${line.qtyOrdered}" data-field="qty" data-idx="${idx}" placeholder="Qty" />
-          <div class="order-line-card__label" id="qty-label-${idx}">Qtd (${line.unidade || 'un'})</div>
+        <div style="flex:1.4;min-width:0">
+          <div style="display:flex;gap:6px;align-items:stretch">
+            <input class="order-line-card__input" type="number" step="any" inputmode="decimal"
+              value="${line.qtyOrdered}" data-field="qty" data-idx="${idx}" placeholder="Qty"
+              style="flex:1;min-width:0" />
+            ${isM2 ? `
+              <select class="order-line-card__input" data-field="qtymode" data-idx="${idx}"
+                style="flex:0 0 54px;padding:0 4px;font-size:13px;text-align:center">
+                <option value="un" ${qtyMode === 'un' ? 'selected' : ''}>un</option>
+                <option value="m²" ${qtyMode === 'm²' ? 'selected' : ''}>m²</option>
+              </select>
+            ` : `<span style="display:flex;align-items:center;font-family:var(--font-mono);font-size:12px;color:var(--paper-dim);padding:0 6px;white-space:nowrap">${line.unidade || 'un'}</span>`}
+          </div>
+          <div class="order-line-card__label" id="qty-label-${idx}" style="color:var(--timber-bright)">${m2equiv}</div>
         </div>
         <div style="flex:1;min-width:0">
           <input class="order-line-card__input" type="number" step="any" inputmode="decimal"
             value="${line.unitPrice}" data-field="price" data-idx="${idx}" placeholder="Preço" />
-          <div class="order-line-card__label" id="price-label-${idx}">€/${line.unidade || 'un'}</div>
+          <div class="order-line-card__label">€/${line.unidade || 'un'}</div>
         </div>
         <button class="order-line-card__remove" data-remove="${idx}" type="button">×</button>
       </div>
@@ -780,11 +810,9 @@ function renderOrderLines() {
       const idx = parseInt(btn.dataset.idx);
       const unit = btn.dataset.unit;
       orderState.newOrderLines[idx].unidade = unit;
-      // Update active state on buttons for this line
       list.querySelectorAll(`[data-unit][data-idx="${idx}"]`).forEach(b => {
         b.classList.toggle('unidade-btn--active', b.dataset.unit === unit);
       });
-      // Update qty and price labels
       const qtyLabel = list.querySelector(`#qty-label-${idx}`);
       const priceLabel = list.querySelector(`#price-label-${idx}`);
       if (qtyLabel) qtyLabel.textContent = `Qtd (${unit})`;
@@ -795,12 +823,28 @@ function renderOrderLines() {
   list.querySelectorAll('[data-field]').forEach(input => {
     input.addEventListener('input', () => {
       const idx = parseInt(input.dataset.idx);
-      const val = parseFloat(input.value) || 0;
-      if (input.dataset.field === 'qty') orderState.newOrderLines[idx].qtyOrdered = val;
-      if (input.dataset.field === 'price') orderState.newOrderLines[idx].unitPrice = val;
-      // Update line total display live
       const line = orderState.newOrderLines[idx];
-      const total = (line.qtyOrdered || 0) * (line.unitPrice || 0);
+
+      if (input.dataset.field === 'qtymode') {
+        line.qtyMode = input.value;
+      } else {
+        const val = parseFloat(input.value) || 0;
+        if (input.dataset.field === 'qty') line.qtyOrdered = val;
+        if (input.dataset.field === 'price') line.unitPrice = val;
+      }
+
+      // Update conversion hint
+      const qtyLabel = list.querySelector(`#qty-label-${idx}`);
+      if (qtyLabel && line.unidade === 'm²' && line.dimensaoM2) {
+        const qty = line.qtyOrdered || 0;
+        const mode = line.qtyMode || 'un';
+        qtyLabel.textContent = mode === 'un'
+          ? `= ${fmtNumber(qty * line.dimensaoM2, 3)} m²`
+          : `= ${fmtNumber(qty / line.dimensaoM2, 2)} un`;
+      }
+
+      // Update line total
+      const total = calcLineTotal(line);
       const totalEl = list.querySelector(`.order-line-card__total[data-idx="${idx}"]`);
       if (totalEl) totalEl.textContent = `Total: ${fmtCurrency(total)}`;
     });
@@ -876,7 +920,9 @@ function showItemSearchOverlay() {
           comprimento: item.comprimento,
           largura: item.largura,
           espessura: item.espessura,
+          dimensaoM2: item.dimensaoM2,
           unidade: item.unidade || 'un',
+          qtyMode: 'un',
           qtyOrdered: 1,
           unitPrice: item.preco || 0
         });
@@ -948,7 +994,10 @@ async function submitOrder(targetStatus) {
   try {
     const data = await apiPost('/api/orders', {
       clientId: client.id, clientName: client.name, salesperson, orderNotes,
-      lines: orderState.newOrderLines
+      lines: orderState.newOrderLines.map(line => ({
+        ...line,
+        qtyOrdered: baseQty(line) // always store in base unit (panels for m² products)
+      }))
     });
 
     // If target is Enviado, update status right away
