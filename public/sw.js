@@ -1,8 +1,9 @@
-// Minimal service worker: caches the app shell so the UI still loads
-// (offline-ish) even with a flaky warehouse wifi signal. Data requests
-// to /api/* are NOT cached — stock/price must always be live, never stale.
+// Service worker: network-first strategy for all app files so updates
+// are always picked up immediately after a deploy. Falls back to cache
+// only when the network is genuinely unavailable (warehouse wifi outage).
+// API calls are never cached — stock and price must always be live.
 
-const CACHE_NAME = 'armazem-shell-v2';
+const CACHE_NAME = 'armazem-shell-v3';
 const SHELL_FILES = ['/', '/index.html', '/manifest.json', '/app.css', '/app.js', '/jsQR.js'];
 
 self.addEventListener('install', (event) => {
@@ -24,10 +25,22 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
-  // Never cache API calls — stock and price must reflect live data.
+  // Never intercept API calls.
   if (url.pathname.startsWith('/api/')) return;
 
+  // Network-first: always try the network, fall back to cache only
+  // if the network fails. This means updates show up immediately after
+  // a deploy without needing to clear cookies/storage.
   event.respondWith(
-    caches.match(event.request).then((cached) => cached || fetch(event.request))
+    fetch(event.request)
+      .then((response) => {
+        // Cache a fresh copy for offline fallback
+        if (response.ok) {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+        }
+        return response;
+      })
+      .catch(() => caches.match(event.request))
   );
 });
