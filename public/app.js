@@ -746,27 +746,51 @@ function renderOrderLines() {
 
   list.innerHTML = orderState.newOrderLines.map((line, idx) => {
     const total = (line.qtyOrdered || 0) * (line.unitPrice || 0);
+    const units = ['un', 'm²', 'ml', 'm³', 'lt'];
     return `
     <div class="order-line-card" data-idx="${idx}">
       <div class="order-line-card__sku">${line.sku}</div>
       <div class="order-line-card__desc">${line.descricao}</div>
       <div class="order-line-card__dims">${fmtNumber(line.comprimento, 0)}×${fmtNumber(line.largura, 0)}×${fmtNumber(line.espessura, 0)}mm</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
+        ${units.map(u => `
+          <button class="unidade-btn ${(line.unidade || 'un') === u ? 'unidade-btn--active' : ''}"
+            data-unit="${u}" data-idx="${idx}" type="button" style="padding:6px 12px;font-size:12px">${u}</button>
+        `).join('')}
+      </div>
       <div class="order-line-card__inputs">
         <div style="flex:1;min-width:0">
           <input class="order-line-card__input" type="number" step="any" inputmode="decimal"
             value="${line.qtyOrdered}" data-field="qty" data-idx="${idx}" placeholder="Qty" />
-          <div class="order-line-card__label">Qtd (${line.unidade || 'un'})</div>
+          <div class="order-line-card__label" id="qty-label-${idx}">Qtd (${line.unidade || 'un'})</div>
         </div>
         <div style="flex:1;min-width:0">
           <input class="order-line-card__input" type="number" step="any" inputmode="decimal"
             value="${line.unitPrice}" data-field="price" data-idx="${idx}" placeholder="Preço" />
-          <div class="order-line-card__label">€/${line.unidade || 'un'}</div>
+          <div class="order-line-card__label" id="price-label-${idx}">€/${line.unidade || 'un'}</div>
         </div>
         <button class="order-line-card__remove" data-remove="${idx}" type="button">×</button>
       </div>
       <div class="order-line-card__total" data-idx="${idx}">Total: ${fmtCurrency(total)}</div>
     </div>
   `}).join('');
+
+  list.querySelectorAll('[data-unit]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const idx = parseInt(btn.dataset.idx);
+      const unit = btn.dataset.unit;
+      orderState.newOrderLines[idx].unidade = unit;
+      // Update active state on buttons for this line
+      list.querySelectorAll(`[data-unit][data-idx="${idx}"]`).forEach(b => {
+        b.classList.toggle('unidade-btn--active', b.dataset.unit === unit);
+      });
+      // Update qty and price labels
+      const qtyLabel = list.querySelector(`#qty-label-${idx}`);
+      const priceLabel = list.querySelector(`#price-label-${idx}`);
+      if (qtyLabel) qtyLabel.textContent = `Qtd (${unit})`;
+      if (priceLabel) priceLabel.textContent = `€/${unit}`;
+    });
+  });
 
   list.querySelectorAll('[data-field]').forEach(input => {
     input.addEventListener('input', () => {
