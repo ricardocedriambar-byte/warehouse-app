@@ -456,6 +456,14 @@ input { font-family: var(--font-mono); }
 }
 .unidade-btn:active { opacity: 0.7; }
 
+.order-line-card__total {
+  margin-top: 8px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--timber-bright);
+  text-align: right;
+}
 
 /* ===== Orders list view ===== */
 .orders-header {

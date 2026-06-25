@@ -129,7 +129,9 @@ function renderItemDetail(item) {
       <div class="field-card" id="stock-card">
         <div class="field-card__top">
           <span class="field-card__label">Stock</span>
-          <span class="field-card__current" data-low="${low}">${fmtNumber(item.stock, 3)} ${item.unidade || 'un'}</span>
+          <span class="field-card__current" data-low="${low}">
+            ${fmtNumber(item.stock, 3)} un${item.unidade === 'm²' && item.dimensaoM2 && item.stock !== null ? ` · ${fmtNumber(item.stock * item.dimensaoM2, 2)} m²` : ''}
+          </span>
         </div>
         <div class="stepper">
           <button class="stepper__btn" data-step="-1" type="button">−</button>
@@ -742,7 +744,9 @@ function renderOrderLines() {
     return;
   }
 
-  list.innerHTML = orderState.newOrderLines.map((line, idx) => `
+  list.innerHTML = orderState.newOrderLines.map((line, idx) => {
+    const total = (line.qtyOrdered || 0) * (line.unitPrice || 0);
+    return `
     <div class="order-line-card" data-idx="${idx}">
       <div class="order-line-card__sku">${line.sku}</div>
       <div class="order-line-card__desc">${line.descricao}</div>
@@ -760,15 +764,21 @@ function renderOrderLines() {
         </div>
         <button class="order-line-card__remove" data-remove="${idx}" type="button">×</button>
       </div>
+      <div class="order-line-card__total" data-idx="${idx}">Total: ${fmtCurrency(total)}</div>
     </div>
-  `).join('');
+  `}).join('');
 
   list.querySelectorAll('[data-field]').forEach(input => {
-    input.addEventListener('change', () => {
+    input.addEventListener('input', () => {
       const idx = parseInt(input.dataset.idx);
       const val = parseFloat(input.value) || 0;
       if (input.dataset.field === 'qty') orderState.newOrderLines[idx].qtyOrdered = val;
       if (input.dataset.field === 'price') orderState.newOrderLines[idx].unitPrice = val;
+      // Update line total display live
+      const line = orderState.newOrderLines[idx];
+      const total = (line.qtyOrdered || 0) * (line.unitPrice || 0);
+      const totalEl = list.querySelector(`.order-line-card__total[data-idx="${idx}"]`);
+      if (totalEl) totalEl.textContent = `Total: ${fmtCurrency(total)}`;
     });
   });
 
