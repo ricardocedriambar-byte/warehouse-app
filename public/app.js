@@ -12,11 +12,46 @@ const state = {
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
-function setView(name) {
+// View history stack for back-button navigation
+const viewHistory = [];
+
+function setView(name, { pushHistory = true } = {}) {
   $$('.view').forEach((el) => el.dataset.active = String(el.dataset.view === name));
   $$('.tabbar__btn').forEach((el) => el.dataset.active = String(el.dataset.goto === name));
   if (name !== 'scan') stopScanner();
+
+  if (pushHistory) {
+    // Push a history entry so Android back button triggers popstate
+    // instead of closing the app. We track our own stack because the
+    // browser history API doesn't let us inspect what's in it.
+    viewHistory.push(name);
+    history.pushState({ view: name }, '', '');
+  }
 }
+
+// Handle Android hardware back button (and browser back)
+window.addEventListener('popstate', () => {
+  viewHistory.pop(); // remove current view
+  const prev = viewHistory[viewHistory.length - 1];
+
+  if (!prev) {
+    // Nothing to go back to — push a new state so the next back press
+    // doesn't close the app, and go to the scan view (home)
+    viewHistory.push('scan');
+    history.pushState({ view: 'scan' }, '', '');
+    setView('scan', { pushHistory: false });
+    return;
+  }
+
+  setView(prev, { pushHistory: false });
+
+  // Re-render views that need it when navigated back to
+  if (prev === 'orders') {
+    renderOrdersList();
+  } else if (prev === 'browse') {
+    renderBrowseList($('#browse-search')?.value || '');
+  }
+});
 
 let toastTimer = null;
 function toast(message, kind = 'default') {
@@ -1237,6 +1272,11 @@ function init() {
   });
 
   loadAllItems();
+
+  // Push an initial history entry so the first Android back press
+  // triggers popstate rather than closing the app immediately.
+  viewHistory.push('scan');
+  history.replaceState({ view: 'scan' }, '', '');
 
   // Chrome PWA on Android ignores CSS overscroll-behavior in some versions
   // and triggers its own pull-to-refresh animation. Block it by preventing
