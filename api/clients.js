@@ -15,9 +15,9 @@ module.exports = async (req, res) => {
     }
 
     if (req.method === 'POST') {
-      const { name, address, phone, email, notes } = req.body || {};
+      const { name, nif, address, phone, email, notes } = req.body || {};
       if (!name) { res.status(400).json({ error: 'name is required' }); return; }
-      const client = await createClient({ name, address, phone, email, notes });
+      const client = await createClient({ name, nif, address, phone, email, notes });
       res.status(201).json({ client });
       return;
     }

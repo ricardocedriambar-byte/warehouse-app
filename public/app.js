@@ -736,6 +736,7 @@ function wireClientSearch(root) {
     const filtered = orderState.clients
       .filter(c => c.name.toLowerCase().includes(q.toLowerCase()) ||
                    c.id.toLowerCase().includes(q.toLowerCase()) ||
+                   (c.nif && c.nif.includes(q)) ||
                    (c.phone && c.phone.includes(q)))
       .slice(0, 10);
 
@@ -748,7 +749,7 @@ function wireClientSearch(root) {
     results.innerHTML = filtered.map(c => `
       <button class="client-result-row" data-id="${c.id}" type="button">
         <span class="client-result-name">${c.name}</span>
-        <span class="client-result-meta">${c.id}${c.phone ? ' · ' + c.phone : ''}</span>
+        <span class="client-result-meta">${c.id}${c.nif ? ' · NIF: ' + c.nif : ''}${c.phone ? ' · ' + c.phone : ''}</span>
       </button>
     `).join('');
 
@@ -810,33 +811,34 @@ function renderOrderLines() {
 
     return `
     <div class="order-line-card" data-idx="${idx}">
-      <div class="order-line-card__sku">${line.sku}</div>
-      <div class="order-line-card__desc">${line.descricao}</div>
-      <div class="order-line-card__dims">${fmtNumber(line.comprimento, 0)}×${fmtNumber(line.largura, 0)}×${fmtNumber(line.espessura, 0)}mm${isM2 ? ` · ${fmtNumber(line.dimensaoM2, 3)} m²/un` : ''}</div>
-      <div class="order-line-card__inputs">
-        <div style="flex:1.4;min-width:0">
-          <div style="display:flex;gap:6px;align-items:stretch">
-            <input class="order-line-card__input" type="number" step="any" inputmode="decimal"
-              value="${line.qtyOrdered}" data-field="qty" data-idx="${idx}" placeholder="Qty"
-              style="flex:1;min-width:0" />
-            ${isM2 ? `
-              <select class="order-line-card__input" data-field="qtymode" data-idx="${idx}"
-                style="flex:0 0 54px;padding:0 4px;font-size:13px;text-align:center">
-                <option value="un" ${qtyMode === 'un' ? 'selected' : ''}>un</option>
-                <option value="m²" ${qtyMode === 'm²' ? 'selected' : ''}>m²</option>
-              </select>
-            ` : `<span style="display:flex;align-items:center;font-family:var(--font-mono);font-size:12px;color:var(--paper-dim);padding:0 6px;white-space:nowrap">${line.unidade || 'un'}</span>`}
-          </div>
-          <div class="order-line-card__label" id="qty-label-${idx}" style="color:var(--timber-bright)">${m2equiv}</div>
+      <div class="order-line-card__header-row">
+        <div style="flex:1;min-width:0">
+          <div class="order-line-card__sku">${line.sku}</div>
+          <div class="order-line-card__desc">${line.descricao}</div>
+          <div class="order-line-card__dims">${fmtNumber(line.comprimento, 0)}×${fmtNumber(line.largura, 0)}×${fmtNumber(line.espessura, 0)}mm${isM2 ? ` · ${fmtNumber(line.dimensaoM2, 3)} m²/un` : ''}</div>
         </div>
+        <button class="order-line-card__remove" data-remove="${idx}" type="button">×</button>
+      </div>
+      <div class="order-line-card__qty-row">
+        <input class="order-line-card__input" type="number" step="any" inputmode="decimal"
+          value="${line.qtyOrdered}" data-field="qty" data-idx="${idx}" placeholder="Qty"
+          style="flex:1;min-width:0" />
+        ${isM2
+          ? `<select class="order-line-card__input" data-field="qtymode" data-idx="${idx}">
+               <option value="un" ${qtyMode === 'un' ? 'selected' : ''}>un</option>
+               <option value="m²" ${qtyMode === 'm²' ? 'selected' : ''}>m²</option>
+             </select>`
+          : `<span style="font-family:var(--font-mono);font-size:12px;color:var(--paper-dim);padding:0 10px;display:flex;align-items:center">${line.unidade || 'un'}</span>`}
+      </div>
+      <div id="qty-label-${idx}" style="font-family:var(--font-mono);font-size:11px;color:var(--timber-bright);margin-bottom:8px;min-height:15px">${m2equiv}</div>
+      <div style="display:flex;gap:8px;align-items:center">
         <div style="flex:1;min-width:0">
           <input class="order-line-card__input" type="number" step="any" inputmode="decimal"
             value="${line.unitPrice}" data-field="price" data-idx="${idx}" placeholder="Preço" />
           <div class="order-line-card__label">€/${line.unidade || 'un'}</div>
         </div>
-        <button class="order-line-card__remove" data-remove="${idx}" type="button">×</button>
+        <div class="order-line-card__total" data-idx="${idx}" style="flex:1;text-align:right;margin-top:0">Total:<br>${fmtCurrency(total)}</div>
       </div>
-      <div class="order-line-card__total" data-idx="${idx}">Total: ${fmtCurrency(total)}</div>
     </div>
   `}).join('');
 
@@ -981,34 +983,82 @@ function showNewClientForm() {
       <span style="font-weight:700;font-size:16px;flex:1">Novo cliente</span>
       <button class="item-search-overlay__cancel" id="client-form-cancel">Cancelar</button>
     </div>
-    <div style="padding:16px;display:flex;flex-direction:column;gap:10px">
-      <input class="order-field" id="new-client-name" type="text" placeholder="Nome *" autocomplete="off" style="margin:0" />
-      <input class="order-field" id="new-client-address" type="text" placeholder="Morada" autocomplete="off" style="margin:0" />
-      <input class="order-field" id="new-client-phone" type="tel" placeholder="Telefone" autocomplete="off" style="margin:0" />
-      <input class="order-field" id="new-client-email" type="email" placeholder="Email" autocomplete="off" style="margin:0" />
-      <button class="order-action-btn order-action-btn--send" id="new-client-save">Guardar cliente</button>
+    <div style="padding:16px;overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:10px">
+
+      <div>
+        <div style="font-family:var(--font-mono);font-size:11px;color:var(--paper-dim);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">Nome *</div>
+        <input class="order-field" id="nc-name" type="text" placeholder="Nome ou empresa" autocomplete="off" style="margin:0" />
+      </div>
+
+      <div>
+        <div style="font-family:var(--font-mono);font-size:11px;color:var(--paper-dim);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">NIF</div>
+        <input class="order-field" id="nc-nif" type="text" inputmode="numeric" placeholder="Ex: 501509020" autocomplete="off" style="margin:0" />
+      </div>
+
+      <div>
+        <div style="font-family:var(--font-mono);font-size:11px;color:var(--paper-dim);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">Morada</div>
+        <input class="order-field" id="nc-morada" type="text" placeholder="Rua, número" autocomplete="off" style="margin:0 0 8px" />
+        <div style="display:flex;gap:8px">
+          <input class="order-field" id="nc-postal" type="text" inputmode="numeric" placeholder="Código postal" autocomplete="off" style="margin:0;flex:1" />
+          <input class="order-field" id="nc-localidade" type="text" placeholder="Localidade" autocomplete="off" style="margin:0;flex:1.5" />
+        </div>
+      </div>
+
+      <div>
+        <div style="font-family:var(--font-mono);font-size:11px;color:var(--paper-dim);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">Contacto</div>
+        <input class="order-field" id="nc-phone" type="tel" placeholder="Telefone" autocomplete="off" style="margin:0 0 8px" />
+        <input class="order-field" id="nc-mobile" type="tel" placeholder="Telemóvel" autocomplete="off" style="margin:0 0 8px" />
+        <input class="order-field" id="nc-email" type="email" placeholder="Email" autocomplete="off" style="margin:0" />
+      </div>
+
+      <div>
+        <div style="font-family:var(--font-mono);font-size:11px;color:var(--paper-dim);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">Notas</div>
+        <textarea class="order-field" id="nc-notes" rows="2" placeholder="Notas opcionais…" style="margin:0;resize:none"></textarea>
+      </div>
+
+      <button class="order-action-btn order-action-btn--send" id="new-client-save" style="margin-top:8px">Guardar cliente</button>
     </div>
   `;
-  $('#app').appendChild(overlay);
+  app.appendChild(overlay);
 
   overlay.querySelector('#client-form-cancel').addEventListener('click', () => overlay.remove());
+
   overlay.querySelector('#new-client-save').addEventListener('click', async () => {
-    const name = overlay.querySelector('#new-client-name').value.trim();
+    const name = overlay.querySelector('#nc-name').value.trim();
     if (!name) { toast('Nome é obrigatório', 'error'); return; }
+
+    const nif    = overlay.querySelector('#nc-nif').value.trim();
+    const morada = overlay.querySelector('#nc-morada').value.trim();
+    const postal = overlay.querySelector('#nc-postal').value.trim();
+    const local  = overlay.querySelector('#nc-localidade').value.trim();
+    const phone  = overlay.querySelector('#nc-phone').value.trim();
+    const mobile = overlay.querySelector('#nc-mobile').value.trim();
+    const email  = overlay.querySelector('#nc-email').value.trim();
+    const notes  = overlay.querySelector('#nc-notes').value.trim();
+
+    const addressParts = [morada, postal, local].filter(Boolean);
+    const address = addressParts.join(', ');
+    const phonePrimary = mobile || phone;
+    const notesParts = [nif ? `NIF: ${nif}` : '', phone && mobile ? `Tel: ${phone}` : '', notes].filter(Boolean);
+
+    const saveBtn = overlay.querySelector('#new-client-save');
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'A guardar…';
+
     try {
       const data = await apiPost('/api/clients', {
-        name,
-        address: overlay.querySelector('#new-client-address').value.trim(),
-        phone: overlay.querySelector('#new-client-phone').value.trim(),
-        email: overlay.querySelector('#new-client-email').value.trim()
+        name, address, phone: phonePrimary, email, notes: notesParts.join(' · ')
       });
       orderState.clients.push(data.client);
       overlay.remove();
-      // Re-render the create view so the new client appears in the dropdown
       renderOrderCreate();
+      // Auto-select the newly created client
+      orderState.newOrderClient = data.client;
       toast(`Cliente "${name}" criado`, 'success');
     } catch (err) {
       toast('Erro ao criar cliente', 'error');
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Guardar cliente';
     }
   });
 }
