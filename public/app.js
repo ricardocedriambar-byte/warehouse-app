@@ -71,11 +71,15 @@ async function showLoginScreen() {
     `).join('');
 
     list.querySelectorAll('.login-user-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
+      btn.addEventListener('click', async () => {
         const user = { id: btn.dataset.id, name: btn.dataset.name, role: btn.dataset.role };
         saveAuth(user);
         overlay.style.display = 'none';
         applyRoleRestrictions();
+        // Always reload + re-render orders so the new role's filters apply
+        // immediately without the user having to switch tabs
+        await loadOrders({ silent: true });
+        renderOrdersList();
         loadAllItems();
       });
     });
@@ -1432,7 +1436,10 @@ function init() {
 
   // Wire the user button in the topbar to allow switching user
   $('#user-btn')?.addEventListener('click', () => {
-    if (confirm(`Sair como ${auth.user?.name}?`)) clearAuth();
+    if (confirm(`Sair como ${auth.user?.name}?`)) {
+      clearAuth();
+      // clearAuth calls showLoginScreen which handles the rest
+    }
   });
 
   if (auth.user) {
