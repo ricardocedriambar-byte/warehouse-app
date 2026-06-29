@@ -1,5 +1,102 @@
 // app.js — no build step, plain JS, runs directly in the browser.
 
+// ─── Auth ─────────────────────────────────────────────────────────────────
+// Identity is stored in localStorage — no server session needed.
+// The user picks their name once; it persists across app restarts.
+const AUTH_KEY = 'cedriambar_user';
+
+const auth = {
+  user: null, // { id, name, role } — role is 'vendedor' or 'armazém'
+  isWarehouse() { return this.user?.role === 'armazém'; },
+  isVendedor() { return this.user?.role === 'vendedor'; },
+};
+
+function saveAuth(user) {
+  auth.user = user;
+  localStorage.setItem(AUTH_KEY, JSON.stringify(user));
+  updateTopbarUser();
+}
+
+function clearAuth() {
+  auth.user = null;
+  localStorage.removeItem(AUTH_KEY);
+  updateTopbarUser();
+  showLoginScreen();
+}
+
+function loadSavedAuth() {
+  try {
+    const saved = localStorage.getItem(AUTH_KEY);
+    if (saved) auth.user = JSON.parse(saved);
+  } catch { auth.user = null; }
+}
+
+function updateTopbarUser() {
+  const btn = $('#user-btn');
+  const nameEl = $('#user-btn-name');
+  if (!btn || !nameEl) return;
+  if (auth.user) {
+    nameEl.textContent = auth.user.name;
+    btn.style.display = 'flex';
+  } else {
+    btn.style.display = 'none';
+  }
+}
+
+async function showLoginScreen() {
+  const overlay = $('#login-overlay');
+  const list = $('#user-list');
+  if (!overlay || !list) return;
+  overlay.style.display = 'flex';
+
+  try {
+    const res = await fetch('/api/users');
+    const data = await res.json();
+    const users = data.users || [];
+
+    if (users.length === 0) {
+      list.innerHTML = `<div style="text-align:center;color:var(--paper-dim);font-size:13px">
+        Adiciona utilizadores no separador "Utilizadores" da Google Sheet.</div>`;
+      return;
+    }
+
+    list.innerHTML = users.map(u => `
+      <button class="login-user-btn" data-id="${u.id}" data-name="${u.name}" data-role="${u.role}">
+        <div class="login-user-btn__avatar">${u.name.charAt(0).toUpperCase()}</div>
+        <div class="login-user-btn__info">
+          <span class="login-user-btn__name">${u.name}</span>
+          <span class="login-user-btn__role">${u.role === 'armazém' ? '📦 Armazém' : '🧾 Vendedor'}</span>
+        </div>
+      </button>
+    `).join('');
+
+    list.querySelectorAll('.login-user-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const user = { id: btn.dataset.id, name: btn.dataset.name, role: btn.dataset.role };
+        saveAuth(user);
+        overlay.style.display = 'none';
+        applyRoleRestrictions();
+        loadAllItems();
+      });
+    });
+  } catch (err) {
+    list.innerHTML = `<div style="text-align:center;color:var(--red);font-size:13px">Erro ao carregar utilizadores</div>`;
+  }
+}
+
+function applyRoleRestrictions() {
+  if (!auth.user) return;
+  const isWarehouse = auth.isWarehouse();
+
+  // Hide order creation button for warehouse workers
+  const newOrderBtn = $('#new-order-btn');
+  if (newOrderBtn) newOrderBtn.style.display = isWarehouse ? 'none' : '';
+
+  // Hide Digitalizar tab for warehouse workers (they pick from orders, not scan freely)
+  // Actually keep scan — they might need to look up items
+  // Just restrict what's visible in orders list instead
+}
+
 const state = {
   items: [],
   itemsLoadedAt: 0,
@@ -585,17 +682,31 @@ function renderOrdersList() {
   const list = $('#orders-list');
   if (!list) return;
 
-  const shown = orderState.filterActive
-    ? orderState.orders.filter(isActiveOrder)
-    : orderState.orders;
+  const user = auth.user;
+  const isWarehouse = auth.isWarehouse();
 
-  if (shown.length === 0) {
-    list.innerHTML = `<div class="orders-empty">${orderState.filterActive ? 'Sem encomendas ativas' : 'Sem encomendas'}</div>`;
+  let visible = orderState.orders.filter(order => {
+    if (isWarehouse) {
+      // Warehouse only sees orders sent to them
+      return ['Enviado', 'Em separação'].includes(order.status);
+    } else {
+      // Vendedor sees own drafts + all non-cancelled active orders
+      if (order.status === 'Rascunho') return order.salesperson === user?.name;
+      if (order.status === 'Cancelado') return !orderState.filterActive;
+      return true;
+    }
+  });
+
+  if (orderState.filterActive && !isWarehouse) {
+    visible = visible.filter(o => !['Concluído', 'Cancelado'].includes(o.status));
+  }
+
+  if (visible.length === 0) {
+    list.innerHTML = `<div class="orders-empty">${isWarehouse ? 'Sem encomendas para separar' : orderState.filterActive ? 'Sem encomendas ativas' : 'Sem encomendas'}</div>`;
     return;
   }
 
-  // Sort: active first, then by date descending
-  const sorted = [...shown].sort((a, b) => {
+  const sorted = [...visible].sort((a, b) => {
     if (isActiveOrder(a) !== isActiveOrder(b)) return isActiveOrder(a) ? -1 : 1;
     return new Date(b.createdAt) - new Date(a.createdAt);
   });
@@ -668,11 +779,6 @@ function renderOrderCreate() {
             + Novo cliente
           </button>
         </div>
-      </div>
-
-      <div class="order-create__section">
-        <div class="order-create__section-title">Vendedor</div>
-        <input class="order-field" id="salesperson-input" type="text" placeholder="Nome do vendedor" autocomplete="off" />
       </div>
 
       <div class="order-create__section">
@@ -1065,7 +1171,7 @@ function showNewClientForm() {
 
 async function submitOrder(targetStatus) {
   const client = orderState.newOrderClient;
-  const salesperson = $('#salesperson-input')?.value.trim() || '';
+  const salesperson = auth.user?.name || '';
   const orderNotes = $('#order-notes-input')?.value.trim() || '';
 
   if (!client) { toast('Selecione um cliente', 'error'); return; }
@@ -1321,7 +1427,25 @@ function init() {
     setTimeout(() => $('#refresh-btn').classList.remove('spinning'), 300);
   });
 
-  loadAllItems();
+  // ─── Auth init ───────────────────────────────────────────────────────────
+  loadSavedAuth();
+
+  // Wire the user button in the topbar to allow switching user
+  $('#user-btn')?.addEventListener('click', () => {
+    if (confirm(`Sair como ${auth.user?.name}?`)) clearAuth();
+  });
+
+  if (auth.user) {
+    // Already logged in — hide overlay and start app
+    const overlay = $('#login-overlay');
+    if (overlay) overlay.style.display = 'none';
+    updateTopbarUser();
+    applyRoleRestrictions();
+    loadAllItems();
+  } else {
+    // Not logged in — show login screen (it loads items after login)
+    showLoginScreen();
+  }
 
   // Push an initial history entry so the first Android back press
   // triggers popstate rather than closing the app immediately.
