@@ -302,7 +302,6 @@ function renderItemDetail(item) {
     </div>
 
     <div class="purchase-note">
-      <span>Valor de compra: ${fmtCurrency(item.valorCompra)}</span>
       ${item.observacoes ? `<span>${item.observacoes}</span>` : ''}
     </div>
   `;
@@ -947,7 +946,6 @@ function renderOrderLines() {
             value="${line.unitPrice}" data-field="price" data-idx="${idx}" placeholder="Preço" />
           <div class="order-line-card__label">€/${line.unidade || 'un'}</div>
         </div>
-        <div class="order-line-card__total" data-idx="${idx}" style="flex:1;text-align:right;margin-top:0">Total:<br>${fmtCurrency(total)}</div>
       </div>
     </div>
   `}).join('');
@@ -981,8 +979,7 @@ function renderOrderLines() {
       }
 
       // Update conversion hint
-      const qtyLabel = list.querySelector(`#qty-label-${idx}`);
-      if (qtyLabel && line.unidade === 'm²' && line.dimensaoM2) {
+      const qtyLabel = list.querySelector(`#qty-label-${idx}`);      if (qtyLabel && line.unidade === 'm²' && line.dimensaoM2) {
         const qty = line.qtyOrdered || 0;
         const mode = line.qtyMode || 'un';
         qtyLabel.textContent = mode === 'un'
@@ -990,10 +987,6 @@ function renderOrderLines() {
           : `= ${fmtNumber(qty / line.dimensaoM2, 2)} un`;
       }
 
-      // Update line total
-      const total = calcLineTotal(line);
-      const totalEl = list.querySelector(`.order-line-card__total[data-idx="${idx}"]`);
-      if (totalEl) totalEl.textContent = `Total: ${fmtCurrency(total)}`;
     });
   });
 
