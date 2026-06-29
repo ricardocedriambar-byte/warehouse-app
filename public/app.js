@@ -1272,6 +1272,15 @@ function renderOrderPick(order, isDraft) {
         <div class="pick-complete-banner__title">✓ Todos os artigos separados</div>
         <button class="pick-complete-btn" id="complete-order-btn">Concluir encomenda</button>
       </div>
+
+      ${!isDraft && !auth.isWarehouse() && order.status !== 'Concluído' && order.status !== 'Cancelado' ? `
+        <div style="margin-top:16px">
+          <button class="order-action-btn order-action-btn--draft" id="cancel-active-btn"
+            style="width:100%;color:var(--red);border:1px solid var(--red)">
+            Cancelar encomenda
+          </button>
+        </div>
+      ` : ''}
     </div>
   `;
 
@@ -1312,6 +1321,26 @@ function renderOrderPick(order, isDraft) {
         toast('Encomenda cancelada', 'default');
       } catch (err) {
         toast('Erro: ' + err.message, 'error');
+      }
+    });
+  }
+
+  const cancelActiveBtn = panel.querySelector('#cancel-active-btn');
+  if (cancelActiveBtn) {
+    cancelActiveBtn.addEventListener('click', async () => {
+      if (!confirm('Cancelar esta encomenda? Esta ação não pode ser desfeita.')) return;
+      cancelActiveBtn.textContent = 'A cancelar…';
+      cancelActiveBtn.disabled = true;
+      try {
+        await apiPatch('/api/orders', { orderId: order.orderId, status: 'Cancelado' });
+        await loadOrders({ silent: true });
+        renderOrdersList();
+        setView('orders');
+        toast('Encomenda cancelada', 'default');
+      } catch (err) {
+        toast('Erro: ' + err.message, 'error');
+        cancelActiveBtn.textContent = 'Cancelar encomenda';
+        cancelActiveBtn.disabled = false;
       }
     });
   }
