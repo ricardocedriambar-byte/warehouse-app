@@ -948,3 +948,61 @@ select.order-line-card__input { flex: 0 0 60px; width: 60px; padding: 10px 4px; 
   .toast { transition: none; }
   .pick-line { transition: none; }
 }
+
+/* ═══════════════════════════════════════════════════════════
+   LOGIN OVERLAY
+   ═══════════════════════════════════════════════════════════ */
+.login-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 100;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sp-8) var(--sp-6);
+  overflow-y: auto;
+  overscroll-behavior: none;
+}
+.login-overlay__inner {
+  width: 100%;
+  max-width: 340px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.login-overlay__logo {
+  height: 52px;
+  width: auto;
+  margin-bottom: var(--sp-4);
+  opacity: 0.95;
+}
+.login-overlay__brand {
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.4px;
+  color: var(--t1);
+  margin-bottom: var(--sp-1);
+}
+.login-overlay__subtitle {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--t3);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  margin-bottom: var(--sp-8);
+}
+.login-overlay__list {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+.login-overlay__loading {
+  text-align: center;
+  color: var(--t3);
+  font-family: var(--mono);
+  font-size: 13px;
+  padding: var(--sp-5) 0;
+}
