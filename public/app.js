@@ -827,6 +827,7 @@ function renderOrderLines() {
             <span class="order-line-card__unit order-line-card__unit--prefix">€</span>
             <input class="order-line-card__input" type="number" step="any" inputmode="decimal"
               value="${line.unitPrice}" data-field="price" data-idx="${idx}" placeholder="0,00" />
+            <span class="order-line-card__unit">/${line.unidade||'un'}</span>
           </div>
 
           <span class="order-line-card__op">=</span>
