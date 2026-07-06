@@ -599,7 +599,7 @@ function renderOrdersList() {
   const isWarehouse = auth.isWarehouse();
 
   let visible = orderState.orders.filter(order => {
-    if (isWarehouse) return ['Enviado','Em separação'].includes(order.status);
+    if (isWarehouse) return order.status === 'Em separação';
     if (order.status === 'Rascunho')  return order.salesperson === user?.name;
     if (order.status === 'Cancelado') return !orderState.filterActive;
     return true;
