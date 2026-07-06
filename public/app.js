@@ -788,12 +788,13 @@ function renderOrderLines() {
   if (orderState.newOrderLines.length === 0) { list.innerHTML = ''; return; }
 
   list.innerHTML = orderState.newOrderLines.map((line, idx) => {
-    const isM2    = line.unidade === 'm²' && line.dimensaoM2;
-    const qtyMode = line.qtyMode || 'un';
-    const hasDims = (line.comprimento || line.largura || line.espessura);
-    const m2equiv = isM2 && qtyMode === 'un'
-      ? `= ${fmtNumber((line.qtyOrdered||0) * line.dimensaoM2, 3)} m²`
-      : isM2 && qtyMode === 'm²'
+    const nativeUnit    = line.unidade || 'un';
+    const hasConversion = nativeUnit !== 'un' && !!line.dimensaoM2;
+    const qtyMode       = line.qtyMode || 'un';
+    const hasDims       = (line.comprimento || line.largura || line.espessura);
+    const convEquiv = hasConversion && qtyMode === 'un'
+      ? `= ${fmtNumber((line.qtyOrdered||0) * line.dimensaoM2, 3)} ${nativeUnit}`
+      : hasConversion && qtyMode === nativeUnit
       ? `= ${fmtNumber((line.qtyOrdered||0) / line.dimensaoM2, 2)} un`
       : '';
     const lineTotal = (line.qtyOrdered || 0) * (line.unitPrice || 0);
@@ -804,7 +805,7 @@ function renderOrderLines() {
           <div class="order-line-card__info">
             <div class="order-line-card__sku">${line.sku}</div>
             <div class="order-line-card__desc">${line.descricao}</div>
-            ${hasDims ? `<div class="order-line-card__dims">${fmtNumber(line.comprimento,0)}×${fmtNumber(line.largura,0)}×${fmtNumber(line.espessura,0)}mm${isM2 ? ` · ${fmtNumber(line.dimensaoM2,3)} m²/un` : ''}</div>` : ''}
+            ${hasDims ? `<div class="order-line-card__dims">${fmtNumber(line.comprimento,0)}×${fmtNumber(line.largura,0)}×${fmtNumber(line.espessura,0)}mm${hasConversion ? ` · ${fmtNumber(line.dimensaoM2,3)} ${nativeUnit}/un` : ''}</div>` : ''}
           </div>
           <button class="order-line-card__remove" data-remove="${idx}" type="button">×</button>
         </div>
@@ -813,12 +814,12 @@ function renderOrderLines() {
           <div class="order-line-card__group">
             <input class="order-line-card__input" type="number" step="any" inputmode="decimal"
               value="${line.qtyOrdered}" data-field="qty" data-idx="${idx}" placeholder="0" />
-            ${isM2
+            ${hasConversion
               ? `<select class="order-line-card__unit order-line-card__unit--select" data-field="qtymode" data-idx="${idx}">
                    <option value="un" ${qtyMode==='un'?'selected':''}>un</option>
-                   <option value="m²" ${qtyMode==='m²'?'selected':''}>m²</option>
+                   <option value="${nativeUnit}" ${qtyMode===nativeUnit?'selected':''}>${nativeUnit}</option>
                  </select>`
-              : `<span class="order-line-card__unit">${line.unidade||'un'}</span>`}
+              : `<span class="order-line-card__unit">${nativeUnit}</span>`}
           </div>
 
           <span class="order-line-card__op">×</span>
@@ -827,7 +828,7 @@ function renderOrderLines() {
             <span class="order-line-card__unit order-line-card__unit--prefix">€</span>
             <input class="order-line-card__input" type="number" step="any" inputmode="decimal"
               value="${line.unitPrice}" data-field="price" data-idx="${idx}" placeholder="0,00" />
-            <span class="order-line-card__unit">/${line.unidade||'un'}</span>
+            <span class="order-line-card__unit">/${nativeUnit}</span>
           </div>
 
           <span class="order-line-card__op">=</span>
@@ -835,7 +836,7 @@ function renderOrderLines() {
           <div class="order-line-card__total" id="line-total-${idx}">${fmtNumber(lineTotal, 2)} €</div>
         </div>
 
-        <div id="qty-label-${idx}" class="order-line-card__equiv">${m2equiv}</div>
+        <div id="qty-label-${idx}" class="order-line-card__equiv">${convEquiv}</div>
       </div>`;
   }).join('');
 
@@ -863,12 +864,14 @@ function renderOrderLines() {
         totalEl.textContent = `${fmtNumber((line.qtyOrdered||0) * (line.unitPrice||0), 2)} €`;
       }
 
+      const nativeUnit    = line.unidade || 'un';
+      const hasConversion = nativeUnit !== 'un' && !!line.dimensaoM2;
       const qtyLabel = list.querySelector(`#qty-label-${idx}`);
-      if (qtyLabel && line.unidade === 'm²' && line.dimensaoM2) {
+      if (qtyLabel && hasConversion) {
         const qty  = line.qtyOrdered || 0;
         const mode = line.qtyMode || 'un';
         qtyLabel.textContent = mode === 'un'
-          ? `= ${fmtNumber(qty * line.dimensaoM2, 3)} m²`
+          ? `= ${fmtNumber(qty * line.dimensaoM2, 3)} ${nativeUnit}`
           : `= ${fmtNumber(qty / line.dimensaoM2, 2)} un`;
       }
     });
