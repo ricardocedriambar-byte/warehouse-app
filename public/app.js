@@ -831,8 +831,6 @@ function renderOrderLines() {
             <span class="order-line-card__unit">/${nativeUnit}</span>
           </div>
 
-          <span class="order-line-card__op">=</span>
-
           <div class="order-line-card__total" id="line-total-${idx}">${fmtNumber(lineTotal, 2)} €</div>
         </div>
 
@@ -915,6 +913,21 @@ async function showItemSearchOverlay() {
         ).slice(0, 60)
       : state.items.slice(0, 60);
 
+    if (filtered.length === 0) {
+      results.innerHTML = `
+        <div class="item-search-empty">
+          <div class="item-search-empty__text">${ql ? `Nenhum artigo encontrado para "${q}"` : 'Nenhum artigo encontrado'}</div>
+          <button class="add-item-btn" id="item-search-new-product">
+            <svg viewBox="0 0 24 24" width="16" height="16"><path d="M12 5v14m-7-7h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>
+            Adicionar novo produto
+          </button>
+        </div>`;
+      results.querySelector('#item-search-new-product').addEventListener('click', () => {
+        showNewProductForm(q, overlay);
+      });
+      return;
+    }
+
     results.innerHTML = filtered.map(item => `
       <button class="browse-row" data-sku="${item.sku}" style="margin-bottom:6px">
         <div class="browse-row__main">
@@ -926,7 +939,15 @@ async function showItemSearchOverlay() {
           <span class="browse-row__stock-label">Preço</span>
           <span class="browse-row__stock">${fmtCurrency(item.preco)}${item.unidade?'/'+item.unidade:''}</span>
         </div>
-      </button>`).join('');
+      </button>`).join('') + `
+      <button class="add-item-btn" id="item-search-new-product-inline">
+        <svg viewBox="0 0 24 24" width="16" height="16"><path d="M12 5v14m-7-7h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>
+        Adicionar novo produto
+      </button>`;
+
+    results.querySelector('#item-search-new-product-inline').addEventListener('click', () => {
+      showNewProductForm(q, overlay);
+    });
 
     results.querySelectorAll('.browse-row').forEach(row => {
       row.addEventListener('click', () => {
@@ -947,6 +968,72 @@ async function showItemSearchOverlay() {
   searchInput.addEventListener('input', e => renderResults(e.target.value));
   renderResults('');
   setTimeout(() => searchInput.focus(), 50);
+}
+
+// ═══════════════════════════════════════════════════════════
+// NEW PRODUCT FORM (ad-hoc line item, added to this order only —
+// does not touch the master inventory sheet)
+// ═══════════════════════════════════════════════════════════
+function showNewProductForm(prefillQuery, searchOverlay) {
+  const overlay = document.createElement('div');
+  overlay.className = 'item-search-overlay';
+  overlay.innerHTML = `
+    <div class="item-search-overlay__header">
+      <span style="font-weight:700;font-size:16px;flex:1">Novo produto</span>
+      <button class="item-search-overlay__cancel" id="np-cancel">Cancelar</button>
+    </div>
+    <div style="padding:16px;overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:10px">
+      <div class="item-search-empty__hint">Este produto será adicionado apenas a esta encomenda.</div>
+      <div>
+        <div class="section-label" style="margin-bottom:6px">SKU</div>
+        <input class="order-field" id="np-sku" type="text" placeholder="Opcional" autocomplete="off" style="margin:0" />
+      </div>
+      <div>
+        <div class="section-label" style="margin-bottom:6px">Descrição *</div>
+        <input class="order-field" id="np-desc" type="text" placeholder="Nome do produto"
+          value="${(prefillQuery||'').replace(/"/g,'&quot;')}" autocomplete="off" style="margin:0" />
+      </div>
+      <div style="display:flex;gap:8px">
+        <div style="flex:1">
+          <div class="section-label" style="margin-bottom:6px">Unidade</div>
+          <select class="order-field" id="np-unidade" style="margin:0">
+            <option value="un">un</option>
+            <option value="m²">m²</option>
+            <option value="ml">ml</option>
+            <option value="m³">m³</option>
+            <option value="lt">lt</option>
+          </select>
+        </div>
+        <div style="flex:1">
+          <div class="section-label" style="margin-bottom:6px">Preço €</div>
+          <input class="order-field" id="np-preco" type="number" step="any" inputmode="decimal" placeholder="0,00" style="margin:0" />
+        </div>
+      </div>
+      <button class="order-action-btn order-action-btn--send" id="np-save" style="margin-top:8px">Adicionar à encomenda</button>
+    </div>`;
+  $('#app').appendChild(overlay);
+
+  overlay.querySelector('#np-cancel').addEventListener('click', () => overlay.remove());
+  overlay.querySelector('#np-save').addEventListener('click', () => {
+    const descricao = overlay.querySelector('#np-desc').value.trim();
+    if (!descricao) { toast('Descrição é obrigatória', 'error'); return; }
+
+    const sku     = overlay.querySelector('#np-sku').value.trim();
+    const unidade = overlay.querySelector('#np-unidade').value;
+    const preco   = parseFloat(overlay.querySelector('#np-preco').value) || 0;
+
+    orderState.newOrderLines.push({
+      sku: sku || '—', descricao,
+      comprimento: 0, largura: 0, espessura: 0,
+      dimensaoM2: null, unidade,
+      qtyMode: 'un', qtyOrdered: 1, unitPrice: preco
+    });
+
+    overlay.remove();
+    if (searchOverlay) searchOverlay.remove();
+    renderOrderLines();
+    toast(`"${descricao}" adicionado à encomenda`, 'success');
+  });
 }
 
 // ═══════════════════════════════════════════════════════════
