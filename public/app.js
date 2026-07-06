@@ -811,7 +811,7 @@ function renderOrderLines() {
         </div>
 
         <div class="order-line-card__row">
-          <div class="order-line-card__group">
+          <div class="order-line-card__group${hasConversion ? ' order-line-card__group--toggle' : ''}">
             <input class="order-line-card__input" type="number" step="any" inputmode="decimal"
               value="${line.qtyOrdered}" data-field="qty" data-idx="${idx}" placeholder="0" />
             ${hasConversion
