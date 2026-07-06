@@ -790,41 +790,51 @@ function renderOrderLines() {
   list.innerHTML = orderState.newOrderLines.map((line, idx) => {
     const isM2    = line.unidade === 'm²' && line.dimensaoM2;
     const qtyMode = line.qtyMode || 'un';
+    const hasDims = (line.comprimento || line.largura || line.espessura);
     const m2equiv = isM2 && qtyMode === 'un'
       ? `= ${fmtNumber((line.qtyOrdered||0) * line.dimensaoM2, 3)} m²`
       : isM2 && qtyMode === 'm²'
       ? `= ${fmtNumber((line.qtyOrdered||0) / line.dimensaoM2, 2)} un`
       : '';
+    const lineTotal = (line.qtyOrdered || 0) * (line.unitPrice || 0);
 
     return `
       <div class="order-line-card" data-idx="${idx}">
         <div class="order-line-card__header-row">
-          <div style="flex:1;min-width:0">
+          <div class="order-line-card__info">
             <div class="order-line-card__sku">${line.sku}</div>
             <div class="order-line-card__desc">${line.descricao}</div>
-            <div class="order-line-card__dims">${fmtNumber(line.comprimento,0)}×${fmtNumber(line.largura,0)}×${fmtNumber(line.espessura,0)}mm${isM2 ? ` · ${fmtNumber(line.dimensaoM2,3)} m²/un` : ''}</div>
+            ${hasDims ? `<div class="order-line-card__dims">${fmtNumber(line.comprimento,0)}×${fmtNumber(line.largura,0)}×${fmtNumber(line.espessura,0)}mm${isM2 ? ` · ${fmtNumber(line.dimensaoM2,3)} m²/un` : ''}</div>` : ''}
           </div>
           <button class="order-line-card__remove" data-remove="${idx}" type="button">×</button>
         </div>
-        <div class="order-line-card__qty-row">
-          <input class="order-line-card__input" type="number" step="any" inputmode="decimal"
-            value="${line.qtyOrdered}" data-field="qty" data-idx="${idx}"
-            placeholder="Qty" style="flex:1;min-width:0" />
-          ${isM2
-            ? `<select class="order-line-card__input" data-field="qtymode" data-idx="${idx}">
-                 <option value="un" ${qtyMode==='un'?'selected':''}>un</option>
-                 <option value="m²" ${qtyMode==='m²'?'selected':''}>m²</option>
-               </select>`
-            : `<span style="font-family:var(--mono);font-size:12px;color:var(--t3);padding:0 10px;display:flex;align-items:center">${line.unidade||'un'}</span>`}
-        </div>
-        <div id="qty-label-${idx}" style="font-family:var(--mono);font-size:11px;color:var(--accent);margin-bottom:8px;min-height:15px">${m2equiv}</div>
-        <div style="display:flex;gap:8px;align-items:center">
-          <div style="flex:1;min-width:0">
+
+        <div class="order-line-card__row">
+          <div class="order-line-card__group">
             <input class="order-line-card__input" type="number" step="any" inputmode="decimal"
-              value="${line.unitPrice}" data-field="price" data-idx="${idx}" placeholder="Preço" />
-            <div class="order-line-card__label">€/${line.unidade||'un'}</div>
+              value="${line.qtyOrdered}" data-field="qty" data-idx="${idx}" placeholder="0" />
+            ${isM2
+              ? `<select class="order-line-card__unit order-line-card__unit--select" data-field="qtymode" data-idx="${idx}">
+                   <option value="un" ${qtyMode==='un'?'selected':''}>un</option>
+                   <option value="m²" ${qtyMode==='m²'?'selected':''}>m²</option>
+                 </select>`
+              : `<span class="order-line-card__unit">${line.unidade||'un'}</span>`}
           </div>
+
+          <span class="order-line-card__op">×</span>
+
+          <div class="order-line-card__group">
+            <span class="order-line-card__unit order-line-card__unit--prefix">€</span>
+            <input class="order-line-card__input" type="number" step="any" inputmode="decimal"
+              value="${line.unitPrice}" data-field="price" data-idx="${idx}" placeholder="0,00" />
+          </div>
+
+          <span class="order-line-card__op">=</span>
+
+          <div class="order-line-card__total" id="line-total-${idx}">${fmtNumber(lineTotal, 2)} €</div>
         </div>
+
+        <div id="qty-label-${idx}" class="order-line-card__equiv">${m2equiv}</div>
       </div>`;
   }).join('');
 
@@ -846,6 +856,12 @@ function renderOrderLines() {
         if (input.dataset.field === 'qty')   line.qtyOrdered = val;
         if (input.dataset.field === 'price') line.unitPrice  = val;
       }
+
+      const totalEl = list.querySelector(`#line-total-${idx}`);
+      if (totalEl) {
+        totalEl.textContent = `${fmtNumber((line.qtyOrdered||0) * (line.unitPrice||0), 2)} €`;
+      }
+
       const qtyLabel = list.querySelector(`#qty-label-${idx}`);
       if (qtyLabel && line.unidade === 'm²' && line.dimensaoM2) {
         const qty  = line.qtyOrdered || 0;
