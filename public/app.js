@@ -163,6 +163,15 @@ function toast(message, kind = 'default') {
   toastTimer = setTimeout(() => { el.dataset.show = 'false'; }, 2800);
 }
 
+// Shows a plain, non-technical message to the user while logging the real
+// error to the console for debugging. Use this instead of surfacing
+// err.message directly, since raw errors (network/API detail) aren't
+// meaningful to non-technical users.
+function showError(err, fallbackMsg) {
+  console.error(err);
+  toast(fallbackMsg || 'Ocorreu um erro. Tente novamente.', 'error');
+}
+
 // ═══════════════════════════════════════════════════════════
 // NUMBER FORMATTING
 // ═══════════════════════════════════════════════════════════
@@ -598,6 +607,14 @@ function renderOrdersList() {
   const user        = auth.user;
   const isWarehouse = auth.isWarehouse();
 
+  const backorderCount = orderState.orders.filter(o => o.status === 'Enviado').length;
+  const backorderBanner = (!isWarehouse && backorderCount > 0)
+    ? `<div class="backorder-banner">
+         <span class="backorder-banner__count">${backorderCount}</span>
+         encomenda${backorderCount !== 1 ? 's' : ''} por separar (à espera de iniciar separação)
+       </div>`
+    : '';
+
   let visible = orderState.orders.filter(order => {
     if (isWarehouse) return order.status === 'Em separação';
     if (order.status === 'Rascunho')  return order.salesperson === user?.name;
@@ -610,7 +627,7 @@ function renderOrdersList() {
   }
 
   if (visible.length === 0) {
-    list.innerHTML = `<div class="orders-empty">${
+    list.innerHTML = backorderBanner + `<div class="orders-empty">${
       isWarehouse ? 'Sem encomendas para separar' :
       orderState.filterActive ? 'Sem encomendas ativas' : 'Sem encomendas'
     }</div>`;
@@ -622,7 +639,7 @@ function renderOrdersList() {
     return new Date(b.createdAt) - new Date(a.createdAt);
   });
 
-  list.innerHTML = sorted.map(order => {
+  list.innerHTML = backorderBanner + sorted.map(order => {
     const totalLines  = order.lines.length;
     const pickedLines = order.lines.filter(l => l.qtyPicked >= l.qtyOrdered).length;
     const pct         = totalLines > 0 ? Math.round((pickedLines / totalLines) * 100) : 0;
@@ -1107,7 +1124,7 @@ function showNewClientForm() {
       orderState.newOrderClient = data.client;
       toast(`Cliente "${name}" criado`, 'success');
     } catch (err) {
-      toast('Erro ao criar cliente', 'error');
+      showError(err, 'Não foi possível criar o cliente. Tente novamente.');
       saveBtn.disabled = false; saveBtn.textContent = 'Guardar cliente';
     }
   });
@@ -1142,7 +1159,7 @@ async function submitOrder(targetStatus) {
     setView('orders');
     toast(targetStatus === 'Enviado' ? 'Encomenda enviada para armazém' : 'Rascunho guardado', 'success');
   } catch (err) {
-    toast('Erro: ' + err.message, 'error');
+    showError(err, 'Não foi possível guardar a encomenda. Verifique a ligação e tente novamente.');
     if (sendBtn)  sendBtn.disabled  = false;
     if (draftBtn) draftBtn.disabled = false;
   }
@@ -1233,7 +1250,7 @@ function renderOrderPick(order, isDraft) {
         if (updated) renderOrderPick(updated, false);
         toast('Encomenda enviada para armazém', 'success');
       } catch (err) {
-        toast('Erro: ' + err.message, 'error');
+        showError(err, 'Não foi possível enviar a encomenda. Tente novamente.');
         draftSendBtn.textContent = 'Enviar para armazém'; draftSendBtn.disabled = false;
       }
     });
@@ -1249,7 +1266,7 @@ function renderOrderPick(order, isDraft) {
         await loadOrders({ silent: true });
         renderOrdersList(); setView('orders');
         toast('Encomenda cancelada', 'default');
-      } catch (err) { toast('Erro: ' + err.message, 'error'); }
+      } catch (err) { showError(err, 'Não foi possível cancelar a encomenda. Tente novamente.'); }
     });
   }
 
@@ -1263,7 +1280,7 @@ function renderOrderPick(order, isDraft) {
         const updated = orderState.orders.find(o => o.orderId === order.orderId);
         if (updated) renderOrderPick(updated, false);
         toast('Separação iniciada', 'success');
-      } catch (err) { toast('Erro: ' + err.message, 'error'); }
+      } catch (err) { showError(err, 'Não foi possível iniciar a separação. Tente novamente.'); }
     });
   }
 
@@ -1287,7 +1304,7 @@ function renderOrderPick(order, isDraft) {
         renderOrderPick(data.order, false);
         toast('Separado', 'success');
       } catch (err) {
-        toast('Erro: ' + err.message, 'error');
+        showError(err, 'Não foi possível guardar a quantidade separada. Tente novamente.');
         confirmBtn.textContent = 'Confirmar'; confirmBtn.disabled = false;
       }
     });
@@ -1305,7 +1322,7 @@ function renderOrderPick(order, isDraft) {
         renderOrdersList(); setView('orders');
         toast('Encomenda cancelada', 'default');
       } catch (err) {
-        toast('Erro: ' + err.message, 'error');
+        showError(err, 'Não foi possível cancelar a encomenda. Tente novamente.');
         cancelActiveBtn.textContent = 'Cancelar encomenda'; cancelActiveBtn.disabled = false;
       }
     });
@@ -1315,6 +1332,7 @@ function renderOrderPick(order, isDraft) {
   const completeBtn = panel.querySelector('#complete-order-btn');
   if (completeBtn) {
     completeBtn.addEventListener('click', async () => {
+      if (!confirm('Concluir esta encomenda? Deixará de aparecer como ativa.')) return;
       completeBtn.textContent = 'A concluir…'; completeBtn.disabled = true;
       try {
         await apiPatch('/api/orders', { orderId: order.orderId, status: 'Concluído' });
@@ -1322,7 +1340,7 @@ function renderOrderPick(order, isDraft) {
         renderOrdersList(); setView('orders');
         toast('Encomenda concluída', 'success');
       } catch (err) {
-        toast('Erro: ' + err.message, 'error');
+        showError(err, 'Não foi possível concluir a encomenda. Tente novamente.');
         completeBtn.textContent = 'Concluir encomenda'; completeBtn.disabled = false;
       }
     });

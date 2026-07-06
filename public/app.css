@@ -681,6 +681,21 @@ input[type=number] { -moz-appearance: textfield; }
 
 .orders-empty { text-align: center; color: var(--t3); padding: 40px var(--sp-5); font-size: 13px; }
 
+.backorder-banner {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--accent-dim);
+  border: 1px solid var(--accent);
+  color: var(--t1);
+  border-radius: var(--r-md);
+  padding: 12px var(--sp-4);
+  font-size: 13px;
+  margin-bottom: var(--sp-3);
+}
+.backorder-banner__count {
+  font-family: var(--mono); font-weight: 700; font-size: 15px; color: var(--accent);
+  flex: 0 0 auto;
+}
+
 /* ═══════════════════════════════════════════════════════════
    ORDER CREATE VIEW
    ═══════════════════════════════════════════════════════════ */
