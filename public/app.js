@@ -79,6 +79,7 @@ async function showLoginScreen() {
         saveAuth(user);
         overlay.style.display = 'none';
         applyRoleRestrictions();
+        loadItemsFromCache();
         await loadOrders({ silent: true });
         renderOrdersList();
         loadAllItems();
@@ -153,6 +154,17 @@ window.addEventListener('popstate', () => {
 // TOAST
 // ═══════════════════════════════════════════════════════════
 let toastTimer = null;
+// Delays calling fn until args stop arriving for `wait` ms — used on search
+// inputs so filtering a large (2000+ item) list doesn't run on every
+// keystroke, only once typing pauses.
+function debounce(fn, wait = 120) {
+  let t;
+  return (...args) => {
+    clearTimeout(t);
+    t = setTimeout(() => fn(...args), wait);
+  };
+}
+
 function toast(message, kind = 'default') {
   const el = $('#toast');
   if (!el) return;
@@ -194,6 +206,32 @@ function setConnectionStatus(s, label) {
   el.textContent = label;
 }
 
+const ITEMS_CACHE_KEY = 'wh_items_cache_v1';
+
+function loadItemsFromCache() {
+  try {
+    const raw = localStorage.getItem(ITEMS_CACHE_KEY);
+    if (!raw) return false;
+    const { items } = JSON.parse(raw);
+    if (!Array.isArray(items) || items.length === 0) return false;
+    state.items = items;
+    setConnectionStatus('ok', `${state.items.length} artigos (offline)`);
+    return true;
+  } catch (err) {
+    console.error(err);
+    return false;
+  }
+}
+
+function saveItemsToCache(items) {
+  try {
+    localStorage.setItem(ITEMS_CACHE_KEY, JSON.stringify({ items, savedAt: Date.now() }));
+  } catch (err) {
+    // Storage full or unavailable — non-fatal, just skip caching
+    console.error(err);
+  }
+}
+
 async function loadAllItems({ silent = false } = {}) {
   if (!silent) setConnectionStatus('loading', 'a atualizar…');
   try {
@@ -201,6 +239,7 @@ async function loadAllItems({ silent = false } = {}) {
     if (!res.ok) throw new Error('bad response');
     const data = await res.json();
     state.items = data.items || [];
+    saveItemsToCache(state.items);
     setConnectionStatus('ok', `${state.items.length} artigos`);
     return state.items;
   } catch (err) {
@@ -537,14 +576,6 @@ function renderBrowseList(query) {
         </div>
       </button>`;
   }).join('');
-
-  list.querySelectorAll('.browse-row').forEach(row => {
-    row.addEventListener('click', () => {
-      const item = state.items.find(i => i.sku === row.dataset.sku);
-      setView('item');
-      renderItemDetail(item);
-    });
-  });
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -659,10 +690,6 @@ function renderOrdersList() {
         </div>
       </button>`;
   }).join('');
-
-  list.querySelectorAll('.order-card').forEach(card => {
-    card.addEventListener('click', () => openOrderDetail(card.dataset.orderId));
-  });
 }
 
 async function openOrderDetail(orderId) {
@@ -919,8 +946,14 @@ async function showItemSearchOverlay() {
 
   overlay.querySelector('#item-search-cancel').addEventListener('click', () => overlay.remove());
 
+  // Track the current query so the delegated handler can pass it to the
+  // "new product" form. Single listener set up once below, instead of
+  // re-attaching per row/button on every debounced keystroke re-render.
+  let currentQuery = '';
+
   function renderResults(q) {
-    const ql = (q || '').toLowerCase().trim();
+    currentQuery = q || '';
+    const ql = currentQuery.toLowerCase().trim();
     const filtered = ql
       ? state.items.filter(i =>
           i.sku.includes(ql) ||
@@ -934,14 +967,11 @@ async function showItemSearchOverlay() {
       results.innerHTML = `
         <div class="item-search-empty">
           <div class="item-search-empty__text">${ql ? `Nenhum artigo encontrado para "${q}"` : 'Nenhum artigo encontrado'}</div>
-          <button class="add-item-btn" id="item-search-new-product">
+          <button class="add-item-btn" data-action="new-product">
             <svg viewBox="0 0 24 24" width="16" height="16"><path d="M12 5v14m-7-7h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>
             Adicionar novo produto
           </button>
         </div>`;
-      results.querySelector('#item-search-new-product').addEventListener('click', () => {
-        showNewProductForm(q, overlay);
-      });
       return;
     }
 
@@ -957,32 +987,31 @@ async function showItemSearchOverlay() {
           <span class="browse-row__stock">${fmtCurrency(item.preco)}${item.unidade?'/'+item.unidade:''}</span>
         </div>
       </button>`).join('') + `
-      <button class="add-item-btn" id="item-search-new-product-inline">
+      <button class="add-item-btn" data-action="new-product">
         <svg viewBox="0 0 24 24" width="16" height="16"><path d="M12 5v14m-7-7h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>
         Adicionar novo produto
       </button>`;
-
-    results.querySelector('#item-search-new-product-inline').addEventListener('click', () => {
-      showNewProductForm(q, overlay);
-    });
-
-    results.querySelectorAll('.browse-row').forEach(row => {
-      row.addEventListener('click', () => {
-        const item = state.items.find(i => i.sku === row.dataset.sku);
-        if (!item) return;
-        orderState.newOrderLines.push({
-          sku: item.sku, descricao: item.descricao,
-          comprimento: item.comprimento, largura: item.largura, espessura: item.espessura,
-          dimensaoM2: item.dimensaoM2, unidade: item.unidade || 'un',
-          qtyMode: 'un', qtyOrdered: 1, unitPrice: item.preco || 0
-        });
-        overlay.remove();
-        renderOrderLines();
-      });
-    });
   }
 
-  searchInput.addEventListener('input', e => renderResults(e.target.value));
+  results.addEventListener('click', e => {
+    const newProductBtn = e.target.closest('[data-action="new-product"]');
+    if (newProductBtn) { showNewProductForm(currentQuery, overlay); return; }
+
+    const row = e.target.closest('.browse-row');
+    if (!row) return;
+    const item = state.items.find(i => i.sku === row.dataset.sku);
+    if (!item) return;
+    orderState.newOrderLines.push({
+      sku: item.sku, descricao: item.descricao,
+      comprimento: item.comprimento, largura: item.largura, espessura: item.espessura,
+      dimensaoM2: item.dimensaoM2, unidade: item.unidade || 'un',
+      qtyMode: 'un', qtyOrdered: 1, unitPrice: item.preco || 0
+    });
+    overlay.remove();
+    renderOrderLines();
+  });
+
+  searchInput.addEventListener('input', debounce(e => renderResults(e.target.value), 120));
   renderResults('');
   setTimeout(() => searchInput.focus(), 50);
 }
@@ -1357,8 +1386,19 @@ function init() {
       const target = btn.dataset.goto;
       setView(target);
       if (target === 'browse') renderBrowseList($('#browse-search')?.value || '');
-      if (target === 'orders') loadOrders().then(() => renderOrdersList());
+      if (target === 'orders') {
+        renderOrdersList();
+        loadOrders({ silent: true }).then(() => renderOrdersList());
+      }
     });
+  });
+
+  // Delegated once here, instead of per-card in renderOrdersList, so
+  // re-rendering the list never re-attaches listeners.
+  $('#orders-list')?.addEventListener('click', e => {
+    const card = e.target.closest('.order-card');
+    if (!card) return;
+    openOrderDetail(card.dataset.orderId);
   });
 
   // Orders filter
@@ -1389,7 +1429,18 @@ function init() {
   });
 
   // Browse search
-  $('#browse-search')?.addEventListener('input', e => renderBrowseList(e.target.value));
+  $('#browse-search')?.addEventListener('input', debounce(e => renderBrowseList(e.target.value), 120));
+
+  // Delegated once here, instead of per-row in renderBrowseList, so
+  // re-rendering the list on every keystroke never re-attaches listeners.
+  $('#browse-list')?.addEventListener('click', e => {
+    const row = e.target.closest('.browse-row');
+    if (!row) return;
+    const item = state.items.find(i => i.sku === row.dataset.sku);
+    if (!item) return;
+    setView('item');
+    renderItemDetail(item);
+  });
 
   // Refresh
   $('#refresh-btn')?.addEventListener('click', async () => {
@@ -1420,7 +1471,9 @@ function init() {
     if (overlay) overlay.style.display = 'none';
     updateTopbarUser();
     applyRoleRestrictions();
+    loadItemsFromCache();
     loadAllItems();
+    loadOrders({ silent: true }).then(() => renderOrdersList());
   } else {
     showLoginScreen();
   }
