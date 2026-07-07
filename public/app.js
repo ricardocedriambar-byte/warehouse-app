@@ -1195,10 +1195,77 @@ async function submitOrder(targetStatus) {
     renderOrdersList();
     setView('orders');
     toast(targetStatus === 'Enviado' ? 'Encomenda enviada para armazém' : 'Rascunho guardado', 'success');
+
+    // Notify by email the moment it's sent (backorder). Not sent for
+    // drafts — only once it actually leaves as an order. This never blocks
+    // or fails the order submission itself, which has already succeeded.
+    if (targetStatus === 'Enviado') {
+      notifyOrderByEmail({ ...data.order, clientName: client.name, salesperson, orderNotes });
+    }
   } catch (err) {
     showError(err, 'Não foi possível guardar a encomenda. Verifique a ligação e tente novamente.');
     if (sendBtn)  sendBtn.disabled  = false;
     if (draftBtn) draftBtn.disabled = false;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// EMAIL NOTIFICATION — sent to Ricardo whenever an order goes to backorder
+// ═══════════════════════════════════════════════════════════
+function buildOrderNoteEmailHTML(order) {
+  const date  = order.createdAt ? new Date(order.createdAt).toLocaleDateString('pt-PT') : new Date().toLocaleDateString('pt-PT');
+  const lines = order.lines || [];
+  const total = lines.reduce((sum, l) => sum + (l.qtyOrdered || 0) * (l.unitPrice || 0), 0);
+
+  const rows = lines.map(l => `
+    <tr>
+      <td style="padding:6px 8px;border-bottom:1px solid #e5e5e5;">${l.sku || '—'}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #e5e5e5;">${l.descricao || ''}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #e5e5e5;text-align:center;">${fmtNumber(l.qtyOrdered || 0)} ${l.unidade || 'un'}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #e5e5e5;text-align:right;">${fmtCurrency(l.unitPrice || 0)}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #e5e5e5;text-align:right;">${fmtCurrency((l.qtyOrdered || 0) * (l.unitPrice || 0))}</td>
+    </tr>`).join('');
+
+  return `
+    <div style="font-family:Arial,sans-serif;color:#111;max-width:600px;margin:0 auto;">
+      <h2 style="margin:0 0 4px;">Nova encomenda enviada</h2>
+      <p style="margin:0 0 16px;color:#555;font-size:14px;">
+        <strong>${order.orderId || ''}</strong> · ${date}<br/>
+        Cliente: ${order.clientName || '—'}<br/>
+        Vendedor: ${order.salesperson || '—'}
+        ${order.orderNotes ? `<br/>Notas: ${order.orderNotes}` : ''}
+      </p>
+      <table style="width:100%;border-collapse:collapse;font-size:13px;">
+        <thead>
+          <tr style="background:#f5f5f5;text-align:left;">
+            <th style="padding:6px 8px;">SKU</th>
+            <th style="padding:6px 8px;">Descrição</th>
+            <th style="padding:6px 8px;text-align:center;">Qtd</th>
+            <th style="padding:6px 8px;text-align:right;">Preço</th>
+            <th style="padding:6px 8px;text-align:right;">Total</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+        <tfoot>
+          <tr>
+            <td colspan="4" style="padding:8px;text-align:right;"><strong>Total</strong></td>
+            <td style="padding:8px;text-align:right;"><strong>${fmtCurrency(total)}</strong></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>`;
+}
+
+async function notifyOrderByEmail(order) {
+  try {
+    await apiPost('/api/notify-order', {
+      subject: `Nova encomenda ${order.orderId || ''} — ${order.clientName || 'cliente'}`,
+      html: buildOrderNoteEmailHTML(order)
+    });
+  } catch (err) {
+    // Never surface this to the user or block their flow — the order
+    // itself already saved successfully. Just log it for debugging.
+    console.error('notifyOrderByEmail failed', err);
   }
 }
 
@@ -1286,6 +1353,7 @@ function renderOrderPick(order, isDraft) {
         const updated = orderState.orders.find(o => o.orderId === order.orderId);
         if (updated) renderOrderPick(updated, false);
         toast('Encomenda enviada para armazém', 'success');
+        notifyOrderByEmail(updated || order);
       } catch (err) {
         showError(err, 'Não foi possível enviar a encomenda. Tente novamente.');
         draftSendBtn.textContent = 'Enviar para armazém'; draftSendBtn.disabled = false;
