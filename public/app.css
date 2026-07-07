@@ -1033,6 +1033,13 @@ select.order-field { padding: 12px var(--sp-4); }
   padding: var(--sp-8) var(--sp-6);
   overflow-y: auto;
   overscroll-behavior: none;
+  /* Defense-in-depth: forces its own compositor layer. Firefox can
+     sometimes composite an actively-streaming <video> via a hardware
+     overlay layer that bypasses normal z-index/background stacking; the
+     real fix is stopping that stream before this overlay shows (see
+     showLoginScreen() in app.js), but promoting this element to its own
+     layer costs nothing and adds a second line of defense. */
+  transform: translateZ(0);
 }
 .login-overlay__inner {
   width: 100%;

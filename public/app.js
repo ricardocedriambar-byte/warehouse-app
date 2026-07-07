@@ -50,6 +50,14 @@ async function showLoginScreen() {
   const overlay = $('#login-overlay');
   const list    = $('#user-list');
   if (!overlay || !list) return;
+
+  // A live camera <video> left running behind this overlay can render
+  // through it on Firefox — an actively-streaming video element is
+  // sometimes composited via a hardware overlay layer that bypasses normal
+  // CSS stacking (z-index/background), regardless of the overlay's own
+  // opacity. Stopping it here guarantees nothing is ever playing underneath.
+  stopScanner();
+
   overlay.style.display = 'flex';
 
   try {
