@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "google-auth-library": "^9.14.1",
-    "xlsx": "^0.18.5"
+    "xlsx": "^0.18.5",
+	"pdf-lib": "^1.17.1",
   }
 }
