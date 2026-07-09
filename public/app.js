@@ -1279,8 +1279,15 @@ function renderOrderPick(order, isDraft) {
             ? (line.comprimento * line.largura) / 1_000_000 : 0;
           const unitsEquiv = perUnitArea > 0
             ? ` (≈ ${fmtNumber(line.qtyOrdered / perUnitArea, 2)} un)` : '';
+          const remainingNative = line.qtyOrdered - line.qtyPicked;
+          // Default to picking in whole units when the item's dimensions
+          // are known — that's what the warehouse actually grabs off the
+          // shelf, not a decimal m² figure.
+          const defaultQty = perUnitArea > 0
+            ? fmtNumber(remainingNative / perUnitArea, 3)
+            : fmtNumber(remainingNative, 3);
           return `
-            <div class="pick-line" data-sku="${line.sku}" data-done="${done}">
+            <div class="pick-line" data-sku="${line.sku}" data-done="${done}" data-per-unit-area="${perUnitArea}">
               <div class="pick-line__top">
                 <span class="pick-line__sku">${line.sku}</span>
                 <span class="pick-line__qty-badge" data-done="${done}">${line.qtyPicked}/${line.qtyOrdered} ${line.unidade||'un'}${unitsEquiv}</span>
@@ -1289,8 +1296,16 @@ function renderOrderPick(order, isDraft) {
               <div class="pick-line__dims">${fmtNumber(line.comprimento,0)}×${fmtNumber(line.largura,0)}×${fmtNumber(line.espessura,0)}mm · ${fmtCurrency(line.unitPrice)}/${line.unidade||'un'}</div>
               ${!isDraft && order.status !== 'Rascunho' ? `
                 <div class="pick-line__actions">
-                  <input class="pick-line__qty-input" type="number" step="any" inputmode="decimal"
-                    value="${line.qtyOrdered - line.qtyPicked}" min="0" />
+                  <div class="pick-line__qty-group">
+                    <input class="pick-line__qty-input" type="number" step="any" inputmode="decimal"
+                      value="${defaultQty}" min="0" />
+                    ${perUnitArea > 0
+                      ? `<select class="pick-line__unit-select">
+                           <option value="un" selected>un</option>
+                           <option value="${line.unidade}">${line.unidade}</option>
+                         </select>`
+                      : `<span class="pick-line__unit-label">${line.unidade||'un'}</span>`}
+                  </div>
                   <button class="pick-line__confirm-btn" data-done="${done}" ${done?'disabled':''}>
                     ${done ? '✓ Separado' : 'Confirmar'}
                   </button>
@@ -1366,14 +1381,34 @@ function renderOrderPick(order, isDraft) {
 
   // Pick confirm buttons
   panel.querySelectorAll('.pick-line').forEach(lineEl => {
-    const sku        = lineEl.dataset.sku;
-    const confirmBtn = lineEl.querySelector('.pick-line__confirm-btn');
-    const qtyInput   = lineEl.querySelector('.pick-line__qty-input');
+    const sku          = lineEl.dataset.sku;
+    const perUnitArea  = parseFloat(lineEl.dataset.perUnitArea) || 0;
+    const confirmBtn   = lineEl.querySelector('.pick-line__confirm-btn');
+    const qtyInput     = lineEl.querySelector('.pick-line__qty-input');
+    const unitSelect   = lineEl.querySelector('.pick-line__unit-select');
     if (!confirmBtn || !qtyInput) return;
 
+    const line = order.lines.find(l => l.sku === sku);
+    const remainingNative = line ? (line.qtyOrdered - line.qtyPicked) : 0;
+
+    // Re-express the current input value when the unit toggle changes,
+    // instead of leaving a now-mismatched number sitting in the field.
+    if (unitSelect) {
+      unitSelect.addEventListener('change', () => {
+        qtyInput.value = unitSelect.value === 'un'
+          ? fmtNumber(remainingNative / perUnitArea, 3)
+          : fmtNumber(remainingNative, 3);
+      });
+    }
+
     confirmBtn.addEventListener('click', async () => {
-      const qty = parseFloat(qtyInput.value) || 0;
-      if (qty <= 0) { toast('Quantidade inválida', 'error'); return; }
+      const entered = parseFloat(qtyInput.value) || 0;
+      if (entered <= 0) { toast('Quantidade inválida', 'error'); return; }
+      // Always send qtyPicked in the item's native/stored unit — convert up
+      // from "un" if that's what's currently selected.
+      const qty = (unitSelect && unitSelect.value === 'un')
+        ? entered * perUnitArea
+        : entered;
       confirmBtn.textContent = 'A guardar…'; confirmBtn.disabled = true;
       try {
         await apiPost('/api/pick-line', { orderId: order.orderId, sku, qtyPicked: qty });
