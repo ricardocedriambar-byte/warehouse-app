@@ -1199,11 +1199,9 @@ async function submitOrder(targetStatus) {
   try {
     const data = await apiPost('/api/orders', {
       clientId: client.id, clientName: client.name, salesperson, orderNotes,
+      status: targetStatus,
       lines: orderState.newOrderLines.map(line => ({ ...line, qtyOrdered: baseQty(line) }))
     });
-    if (targetStatus === 'Enviado') {
-      await apiPatch('/api/orders', { orderId: data.order.orderId, status: 'Enviado' });
-    }
     await loadOrders({ silent: true });
     renderOrdersList();
     setView('orders');
