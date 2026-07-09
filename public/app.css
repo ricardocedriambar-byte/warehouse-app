@@ -796,6 +796,7 @@ select.order-field { padding: 12px var(--sp-4); }
 }
 .order-line-card__group:focus-within { border-color: var(--b3); }
 .order-line-card__group--toggle { border-color: var(--accent-dim); }
+.order-line-card__group--discount { flex: 0 0 56px; }
 .order-line-card__input {
   background: none;
   border: none;

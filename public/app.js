@@ -829,8 +829,12 @@ function wireClientSearch(root) {
 // ORDER LINES
 // ═══════════════════════════════════════════════════════════
 function baseQty(line) {
-  if (line.unidade === 'm²' && line.dimensaoM2 && (line.qtyMode || 'un') === 'm²')
-    return (line.qtyOrdered || 0) / line.dimensaoM2;
+  // When the item is sold in m² but the person entered a count of whole
+  // units ("un"), convert to the stored base unit (m²) by multiplying by
+  // the per-unit area. If they entered the quantity directly in m² (already
+  // the native/base unit), no conversion is needed.
+  if (line.unidade === 'm²' && line.dimensaoM2 && (line.qtyMode || 'un') === 'un')
+    return (line.qtyOrdered || 0) * line.dimensaoM2;
   return line.qtyOrdered || 0;
 }
 
@@ -844,12 +848,13 @@ function renderOrderLines() {
     const hasConversion = nativeUnit !== 'un' && !!line.dimensaoM2;
     const qtyMode       = line.qtyMode || 'un';
     const hasDims       = (line.comprimento || line.largura || line.espessura);
+    const discountPct   = line.discountPct || 0;
     const convEquiv = hasConversion && qtyMode === 'un'
       ? `= ${fmtNumber((line.qtyOrdered||0) * line.dimensaoM2, 3)} ${nativeUnit}`
       : hasConversion && qtyMode === nativeUnit
       ? `= ${fmtNumber((line.qtyOrdered||0) / line.dimensaoM2, 2)} un`
       : '';
-    const lineTotal = (line.qtyOrdered || 0) * (line.unitPrice || 0);
+    const lineTotal = (line.qtyOrdered || 0) * (line.unitPrice || 0) * (1 - discountPct / 100);
 
     return `
       <div class="order-line-card" data-idx="${idx}">
@@ -883,6 +888,12 @@ function renderOrderLines() {
             <span class="order-line-card__unit">/${nativeUnit}</span>
           </div>
 
+          <div class="order-line-card__group order-line-card__group--discount">
+            <input class="order-line-card__input" type="number" step="any" inputmode="decimal" min="0" max="100"
+              value="${discountPct || ''}" data-field="discount" data-idx="${idx}" placeholder="0" />
+            <span class="order-line-card__unit">%</span>
+          </div>
+
           <div class="order-line-card__total" id="line-total-${idx}">${fmtNumber(lineTotal, 2)} €</div>
         </div>
 
@@ -905,13 +916,15 @@ function renderOrderLines() {
         line.qtyMode = input.value;
       } else {
         const val = parseFloat(input.value) || 0;
-        if (input.dataset.field === 'qty')   line.qtyOrdered = val;
-        if (input.dataset.field === 'price') line.unitPrice  = val;
+        if (input.dataset.field === 'qty')      line.qtyOrdered   = val;
+        if (input.dataset.field === 'price')    line.unitPrice    = val;
+        if (input.dataset.field === 'discount') line.discountPct  = Math.min(100, Math.max(0, val));
       }
 
       const totalEl = list.querySelector(`#line-total-${idx}`);
       if (totalEl) {
-        totalEl.textContent = `${fmtNumber((line.qtyOrdered||0) * (line.unitPrice||0), 2)} €`;
+        const total = (line.qtyOrdered||0) * (line.unitPrice||0) * (1 - (line.discountPct||0)/100);
+        totalEl.textContent = `${fmtNumber(total, 2)} €`;
       }
 
       const nativeUnit    = line.unidade || 'un';
@@ -1262,11 +1275,15 @@ function renderOrderPick(order, isDraft) {
       <div class="pick-lines">
         ${order.lines.map(line => {
           const done = line.qtyPicked >= line.qtyOrdered;
+          const perUnitArea = (line.unidade === 'm²' && line.comprimento && line.largura)
+            ? (line.comprimento * line.largura) / 1_000_000 : 0;
+          const unitsEquiv = perUnitArea > 0
+            ? ` (≈ ${fmtNumber(line.qtyOrdered / perUnitArea, 2)} un)` : '';
           return `
             <div class="pick-line" data-sku="${line.sku}" data-done="${done}">
               <div class="pick-line__top">
                 <span class="pick-line__sku">${line.sku}</span>
-                <span class="pick-line__qty-badge" data-done="${done}">${line.qtyPicked}/${line.qtyOrdered} ${line.unidade||'un'}</span>
+                <span class="pick-line__qty-badge" data-done="${done}">${line.qtyPicked}/${line.qtyOrdered} ${line.unidade||'un'}${unitsEquiv}</span>
               </div>
               <div class="pick-line__desc">${line.descricao}</div>
               <div class="pick-line__dims">${fmtNumber(line.comprimento,0)}×${fmtNumber(line.largura,0)}×${fmtNumber(line.espessura,0)}mm · ${fmtCurrency(line.unitPrice)}/${line.unidade||'un'}</div>

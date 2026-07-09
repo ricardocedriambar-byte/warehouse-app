@@ -46,7 +46,8 @@ function fmtNum(n, decimals = 2) {
 function buildEmailHTML(order, client) {
   const date  = order.createdAt ? new Date(order.createdAt).toLocaleDateString('pt-PT') : new Date().toLocaleDateString('pt-PT');
   const lines = order.lines || [];
-  const total = lines.reduce((sum, l) => sum + (l.qtyOrdered || 0) * (l.unitPrice || 0), 0);
+  const lineNet = l => (l.qtyOrdered || 0) * (l.unitPrice || 0) * (1 - (l.discountPct || 0) / 100);
+  const total = lines.reduce((sum, l) => sum + lineNet(l), 0);
 
   const rows = lines.map(l => `
     <tr>
@@ -54,7 +55,8 @@ function buildEmailHTML(order, client) {
       <td style="padding:6px 8px;border-bottom:1px solid #e5e5e5;">${l.descricao || ''}</td>
       <td style="padding:6px 8px;border-bottom:1px solid #e5e5e5;text-align:center;">${fmtNum(l.qtyOrdered, 0)} ${l.unidade || 'un'}</td>
       <td style="padding:6px 8px;border-bottom:1px solid #e5e5e5;text-align:right;">${fmtNum(l.unitPrice)}</td>
-      <td style="padding:6px 8px;border-bottom:1px solid #e5e5e5;text-align:right;">${fmtNum((l.qtyOrdered || 0) * (l.unitPrice || 0))}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #e5e5e5;text-align:right;">${l.discountPct ? fmtNum(l.discountPct, 0) + '%' : '—'}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #e5e5e5;text-align:right;">${fmtNum(lineNet(l))}</td>
     </tr>`).join('');
 
   return `
@@ -73,13 +75,14 @@ function buildEmailHTML(order, client) {
             <th style="padding:6px 8px;">Descrição</th>
             <th style="padding:6px 8px;text-align:center;">Qtd</th>
             <th style="padding:6px 8px;text-align:right;">Preço</th>
+            <th style="padding:6px 8px;text-align:right;">Desc.</th>
             <th style="padding:6px 8px;text-align:right;">Total</th>
           </tr>
         </thead>
         <tbody>${rows}</tbody>
         <tfoot>
           <tr>
-            <td colspan="4" style="padding:8px;text-align:right;"><strong>Total</strong></td>
+            <td colspan="5" style="padding:8px;text-align:right;"><strong>Total</strong></td>
             <td style="padding:8px;text-align:right;"><strong>${fmtNum(total)}</strong></td>
           </tr>
         </tfoot>
