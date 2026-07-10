@@ -25,11 +25,23 @@ module.exports = async (req, res) => {
     // Update the picked quantity on the order line
     await updateLinePicked(orderId, sku, qty);
 
-    // Decrement stock in the Etiquetas sheet
+    // Decrement stock in the Etiquetas sheet.
+    //
+    // Important: `qty` here is expressed in the item's PRICING unit (e.g.
+    // m², to match unitPrice which is per m²) — that's what the order line
+    // needs for correct money totals. But STOCK on the shelf is always
+    // counted in physical pieces (whole panels/packages), not m². For an
+    // item with, say, 5 m² per panel, picking "12 un" arrives here as
+    // qty = 60 (m²) — decrementing STOCK by 60 would be wrong by a factor
+    // of 5. So convert back down to piece count using the item's
+    // dimensaoM2 (quantity-per-package) before touching STOCK.
     const item = await findItemBySku(sku);
     if (item) {
+      const piecesPicked = (item.unidade && item.unidade !== 'un' && item.dimensaoM2)
+        ? qty / item.dimensaoM2
+        : qty;
       const currentStock = item.stock || 0;
-      const newStock = currentStock - qty;
+      const newStock = currentStock - piecesPicked;
       await updateItemFields(item.rowNumber, { stock: newStock });
       await appendLogEntry({
         sku,
@@ -37,7 +49,7 @@ module.exports = async (req, res) => {
         field: 'STOCK',
         oldValue: currentStock,
         newValue: newStock,
-        note: `Separação encomenda ${orderId}`
+        note: `Separação encomenda ${orderId} (${qty} ${item.unidade || 'un'} = ${piecesPicked.toFixed(3)} un)`
       });
     }
 
