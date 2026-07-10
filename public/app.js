@@ -1292,7 +1292,7 @@ function renderOrderPick(order, isDraft) {
               </div>
               <div class="pick-line__desc">${line.descricao}</div>
               <div class="pick-line__dims">${fmtNumber(line.comprimento,0)}×${fmtNumber(line.largura,0)}×${fmtNumber(line.espessura,0)}mm · ${fmtCurrency(line.unitPrice)}/${line.unidade||'un'}</div>
-              ${!isDraft && order.status !== 'Rascunho' ? `
+              ${order.status === 'Em separação' ? `
                 <div class="pick-line__actions">
                   <div class="pick-line__qty-group">
                     <input class="pick-line__qty-input" type="number" step="any" inputmode="decimal"
@@ -1317,7 +1317,7 @@ function renderOrderPick(order, isDraft) {
         <button class="pick-complete-btn" id="complete-order-btn">Concluir encomenda</button>
       </div>
 
-      ${!isDraft && !auth.isWarehouse() && !['Concluído','Cancelado'].includes(order.status) ? `
+      ${!isDraft && !auth.isWarehouse() && order.status !== 'Cancelado' ? `
         <div style="margin-top:16px">
           <button class="btn-danger" id="cancel-active-btn" style="width:100%">Cancelar encomenda</button>
         </div>` : ''}
@@ -1427,7 +1427,11 @@ function renderOrderPick(order, isDraft) {
   const cancelActiveBtn = panel.querySelector('#cancel-active-btn');
   if (cancelActiveBtn) {
     cancelActiveBtn.addEventListener('click', async () => {
-      if (!confirm('Cancelar esta encomenda? Esta ação não pode ser desfeita.')) return;
+      const hasPicked = order.lines.some(l => l.qtyPicked > 0);
+      const msg = hasPicked
+        ? 'Cancelar esta encomenda? O stock já separado será reposto. Esta ação não pode ser desfeita.'
+        : 'Cancelar esta encomenda? Esta ação não pode ser desfeita.';
+      if (!confirm(msg)) return;
       cancelActiveBtn.textContent = 'A cancelar…'; cancelActiveBtn.disabled = true;
       try {
         await apiPatch('/api/orders', { orderId: order.orderId, status: 'Cancelado' });
