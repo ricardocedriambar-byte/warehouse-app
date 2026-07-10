@@ -249,12 +249,30 @@ async function loadAllItems({ silent = false } = {}) {
     state.items = data.items || [];
     saveItemsToCache(state.items);
     setConnectionStatus('ok', `${state.items.length} artigos`);
+    refreshVisibleItemViews();
     return state.items;
   } catch (err) {
     console.error(err);
     setConnectionStatus('error', 'sem ligação');
     if (!silent) toast('Não foi possível atualizar os dados', 'error');
     return state.items;
+  }
+}
+
+// Re-renders whatever item-related screen is currently on-screen after
+// state.items changes — otherwise a silent background refresh updates the
+// data in memory but the person keeps looking at stale numbers until they
+// navigate away and back.
+function refreshVisibleItemViews() {
+  const activeView = document.querySelector('.view[data-active="true"]');
+  if (!activeView) return;
+  const viewName = activeView.dataset.view;
+
+  if (viewName === 'browse') {
+    renderBrowseList($('#browse-search')?.value || '');
+  } else if (viewName === 'item' && state.currentItem?.sku) {
+    const fresh = state.items.find(i => i.sku === state.currentItem.sku);
+    if (fresh) renderItemDetail(fresh);
   }
 }
 
@@ -1416,6 +1434,7 @@ function renderOrderPick(order, isDraft) {
         if (idx !== -1) orderState.orders[idx] = data.order;
         renderOrderPick(data.order, false);
         toast('Separado', 'success');
+        loadAllItems({ silent: true }); // stock just changed — refresh in the background
       } catch (err) {
         showError(err, 'Não foi possível guardar a quantidade separada. Tente novamente.');
         confirmBtn.textContent = 'Confirmar'; confirmBtn.disabled = false;
@@ -1438,6 +1457,7 @@ function renderOrderPick(order, isDraft) {
         await loadOrders({ silent: true });
         renderOrdersList(); setView('orders');
         toast('Encomenda cancelada', 'default');
+        loadAllItems({ silent: true }); // cancelling can restore stock — refresh in the background
       } catch (err) {
         showError(err, 'Não foi possível cancelar a encomenda. Tente novamente.');
         cancelActiveBtn.textContent = 'Cancelar encomenda'; cancelActiveBtn.disabled = false;
@@ -1574,6 +1594,29 @@ function init() {
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('/sw.js').catch(err => console.error('SW:', err));
   }
+
+  // Background stock refresh — picks made by OTHER people (e.g. Bruno in
+  // the warehouse) change stock too, not just actions taken in this tab.
+  // Poll quietly every 30s so those changes show up without anyone having
+  // to hit the manual refresh button. Paused while the tab isn't visible,
+  // so it doesn't burn requests when the phone is locked or backgrounded.
+  const STOCK_POLL_MS = 30000;
+  let stockPollTimer = null;
+  function startStockPolling() {
+    if (stockPollTimer) return;
+    stockPollTimer = setInterval(() => {
+      if (auth.user && !document.hidden) loadAllItems({ silent: true });
+    }, STOCK_POLL_MS);
+  }
+  function stopStockPolling() {
+    clearInterval(stockPollTimer);
+    stockPollTimer = null;
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) stopStockPolling();
+    else { loadAllItems({ silent: true }); startStockPolling(); }
+  });
+  if (auth.user) startStockPolling();
 }
 
 document.addEventListener('DOMContentLoaded', init);
