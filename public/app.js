@@ -1498,6 +1498,7 @@ function init() {
         renderOrdersList();
         loadOrders({ silent: true }).then(() => renderOrdersList());
       }
+      if (target === 'portas') renderDoorsPanel();
     });
   });
 
