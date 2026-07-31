@@ -1154,6 +1154,10 @@ select.order-field { padding: 12px var(--sp-4); }
 .doors-type__del { background: none; border: none; color: var(--danger); font-size: 14px; padding: 4px 6px; opacity: 0.85; }
 .doors-type__body { padding: 0 var(--sp-3) var(--sp-3); }
 .doors-type__body .order-field { margin-bottom: var(--sp-2); }
+.doors-type__dims-label, .doors-type__sub-label {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px;
+  color: var(--t3); margin: var(--sp-2) 0 4px;
+}
 
 .doors-stepper { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
 .doors-stepper__btn {
@@ -1215,9 +1219,6 @@ table.doors-doc__table td { padding: 6px 5px; border-bottom: 1px solid #d8d0c2; 
   white-space: pre-wrap; font-size: 13px; line-height: 1.4;
   border-bottom: 1px solid #d8d0c2; padding-bottom: 6px; margin-bottom: 20px; min-height: 1.2em;
 }
-.doors-doc__sign { display: flex; justify-content: space-between; margin-top: 30px; }
-.doors-doc__sig { width: 44%; text-align: center; font-size: 11px; text-transform: uppercase; color: #7a6f5c; }
-.doors-doc__sig-line { border-top: 1px solid #2b2620; margin-bottom: 5px; }
 
 /* Print: only the document preview should print, full page, no app chrome */
 @media print {

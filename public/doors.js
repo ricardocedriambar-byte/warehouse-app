@@ -1,13 +1,15 @@
 // doors.js — Ficha de Encomenda de Portas (Cedriambar)
-// Model: the user defines "tipos de porta" (a spec) and a quantity for each,
-// instead of one entry per physical door. Totals are always visible (sticky
-// bar) while adding/editing types. Print-only — nothing is saved to Sheets.
+// Model: "tipos de porta" (spec × quantity). Guarnição/bite chosen per type.
+// Dimensions read as ALTURA×LARGURA×ESPESSURA, matching the paper convention.
+// Material is picked from the live inventory (familia), not free text.
+// Print-only — nothing is saved to Sheets.
 
 let doorsRendered = false;
-let dpTypes = [];      // [{ id, qty, expanded, tipo, local, largura, altura, espessura, travessao, vidro, abertura, fechadura, obs }]
+let dpTypes = [];      // [{ id, qty, expanded, tipo, altura, largura, espessura, gLargo, gFino, travessao, vidro, biteStock, abertura, fechadura, obs }]
 let dpTypeSeq = 0;
+let dpMaterials = [];  // distinct familia values from inventory
 
-function renderDoorsPanel() {
+async function renderDoorsPanel() {
   const root = document.getElementById('portas-panel');
   if (!root) return;
   if (doorsRendered) { renderDoorsAll(); return; }
@@ -22,23 +24,13 @@ function renderDoorsPanel() {
       </div>
 
       <div class="order-create__section">
-        <div class="doors-row3">
+        <div class="doors-row2">
           <input type="text" id="dp-cliente" class="order-field" placeholder="Cliente / obra">
           <input type="date" id="dp-data" class="order-field">
         </div>
-        <input type="text" id="dp-material" class="order-field" placeholder="Material / acabamento (ex: CPL BRANCO)">
-
-        <button type="button" id="dp-adv-toggle" class="doors-adv-toggle">Mais definições ▾</button>
-        <div id="dp-adv-body" class="doors-adv-body" style="display:none;">
-          <div class="doors-row2">
-            <input type="number" id="dp-g-largo" class="order-field" placeholder="Guarnição largo (mm)" value="15">
-            <input type="number" id="dp-g-fino" class="order-field" placeholder="Guarnição fino (mm)" value="10">
-          </div>
-          <select id="dp-bite-stock" class="order-field">
-            <option value="1830">Bite stock 1830mm — 6 peças/porta com vidro</option>
-            <option value="2750">Bite stock 2750mm — 4 peças/porta com vidro</option>
-          </select>
-        </div>
+        <select id="dp-material" class="order-field">
+          <option value="">A carregar materiais…</option>
+        </select>
       </div>
 
       <div class="order-create__section">
@@ -72,8 +64,8 @@ function renderDoorsPanel() {
           <table class="doors-doc__table">
             <thead>
               <tr>
-                <th>Qtd</th><th>Local</th><th>Larg.</th><th>Alt.</th><th>Aduela</th>
-                <th>Tipo</th><th>Abertura</th><th>Vidro</th><th>Fechad. / Obs.</th>
+                <th>Qtd</th><th>Medida (AxLxE)</th><th>Tipo</th>
+                <th>Abertura</th><th>Vidro</th><th>Fechad. / Obs.</th>
               </tr>
             </thead>
             <tbody id="dp-out-doors"></tbody>
@@ -81,27 +73,15 @@ function renderDoorsPanel() {
 
           <div class="doors-doc__obs-label">Observações gerais</div>
           <div class="doors-doc__obs-value" id="dp-out-obs">&nbsp;</div>
-
-          <div class="doors-doc__sign">
-            <div class="doors-doc__sig"><div class="doors-doc__sig-line"></div><span>Cliente</span></div>
-            <div class="doors-doc__sig"><div class="doors-doc__sig-line"></div><span>Marceneiro</span></div>
-          </div>
         </div>
       </div>
     </div>
   `;
 
-  ['dp-cliente','dp-data','dp-material','dp-g-largo','dp-g-fino','dp-bite-stock','dp-obs-gerais'].forEach(id => {
+  ['dp-cliente','dp-data','dp-material','dp-obs-gerais'].forEach(id => {
     const el = document.getElementById(id);
     el.addEventListener('input', renderDoorsAll);
     el.addEventListener('change', renderDoorsAll);
-  });
-
-  document.getElementById('dp-adv-toggle').addEventListener('click', () => {
-    const body = document.getElementById('dp-adv-body');
-    const open = body.style.display !== 'none';
-    body.style.display = open ? 'none' : 'block';
-    document.getElementById('dp-adv-toggle').textContent = open ? 'Mais definições ▾' : 'Mais definições ▴';
   });
 
   document.getElementById('dp-add-type').addEventListener('click', () => addDoorType(true));
@@ -110,14 +90,35 @@ function renderDoorsPanel() {
   document.getElementById('dp-data').valueAsDate = new Date();
   addDoorType(true);
   renderDoorsAll();
+  loadDoorMaterials();
+}
+
+async function loadDoorMaterials() {
+  const sel = document.getElementById('dp-material');
+  try {
+    const res = await fetch('/api/items');
+    const data = await res.json();
+    const families = Array.from(new Set((data.items || [])
+      .map(it => (it.familia || '').trim())
+      .filter(Boolean)))
+      .sort((a, b) => a.localeCompare(b));
+    dpMaterials = families;
+    sel.innerHTML = `<option value="">Selecionar material…</option>` +
+      families.map(f => `<option value="${dpEsc(f)}">${dpEsc(f)}</option>`).join('');
+  } catch (err) {
+    console.error('Falha ao carregar materiais', err);
+    sel.innerHTML = `<option value="">Não foi possível carregar materiais</option>`;
+  }
 }
 
 function addDoorType(expanded) {
   dpTypeSeq++;
   dpTypes.push({
     id: dpTypeSeq, qty: 1, expanded: !!expanded, tipo: 'simples',
-    local: '', largura: '', altura: '', espessura: '', travessao: 'fino',
-    vidro: false, abertura: '', fechadura: '', obs: ''
+    altura: '', largura: '', espessura: '',
+    gLargo: 15, gFino: 10, travessao: 'fino',
+    vidro: false, biteStock: '1830',
+    abertura: '', fechadura: '', obs: ''
   });
   renderTypesList();
   renderDoorsAll();
@@ -125,11 +126,13 @@ function addDoorType(expanded) {
 
 function dpSummaryText(t) {
   const tipoLabel = t.tipo === 'dupla' ? 'Dupla' : (t.tipo === 'passagem' ? 'Passagem' : 'Simples');
-  const dims = (t.largura && t.altura) ? `${t.largura}×${t.altura}mm` : 'sem medidas';
-  const parts = [t.local || tipoLabel, dims];
-  if (t.espessura) parts.push(`aduela ${t.espessura}mm`);
+  const parts = [tipoLabel, dpMedida(t) || 'sem medidas'];
   if (t.vidro) parts.push('vidro');
   return parts.join(' · ');
+}
+
+function dpMedida(t) {
+  return [t.altura, t.largura, t.espessura].filter(Boolean).join('X');
 }
 
 function renderTypesList() {
@@ -146,12 +149,13 @@ function renderTypesList() {
         <button type="button" class="doors-type__del" data-act="del">✕</button>
       </div>
       <div class="doors-type__body" style="display:${t.expanded ? 'block' : 'none'};">
-        <input type="text" class="order-field t-local" placeholder="Local / designação (opcional)" value="${dpEsc(t.local)}">
+        <div class="doors-type__dims-label">Altura × Largura × Espessura (aduela)</div>
         <div class="doors-row3">
-          <input type="number" class="order-field t-largura" placeholder="Largura mm" value="${t.largura}">
           <input type="number" class="order-field t-altura" placeholder="Altura mm" value="${t.altura}">
-          <input type="number" class="order-field t-espessura" placeholder="Aduela mm" value="${t.espessura}">
+          <input type="number" class="order-field t-largura" placeholder="Largura mm" value="${t.largura}">
+          <input type="number" class="order-field t-espessura" placeholder="Espessura mm" value="${t.espessura}">
         </div>
+
         <div class="doors-tipo-toggle">
           <button type="button" data-val="simples" class="${t.tipo==='simples'?'active':''}">Simples</button>
           <button type="button" data-val="dupla" class="${t.tipo==='dupla'?'active':''}">Dupla</button>
@@ -161,10 +165,22 @@ function renderTypesList() {
           <option value="fino" ${t.travessao==='fino'?'selected':''}>Travessão: perfil fino</option>
           <option value="largo" ${t.travessao==='largo'?'selected':''}>Travessão: perfil largo</option>
         </select>
+
+        <div class="doors-type__sub-label">Guarnição</div>
+        <div class="doors-row2">
+          <input type="number" class="order-field t-g-largo" placeholder="Perfil largo (mm)" value="${t.gLargo}">
+          <input type="number" class="order-field t-g-fino" placeholder="Perfil fino (mm)" value="${t.gFino}">
+        </div>
+
         <label class="doors-checkbox">
           <input type="checkbox" class="t-vidro" ${t.vidro?'checked':''}>
           <span>Tem vidro</span>
         </label>
+        <select class="order-field t-bite-stock" style="display:${t.vidro?'block':'none'};">
+          <option value="1830" ${t.biteStock==='1830'?'selected':''}>Bite stock 1830mm — 6 peças</option>
+          <option value="2750" ${t.biteStock==='2750'?'selected':''}>Bite stock 2750mm — 4 peças</option>
+        </select>
+
         <div class="doors-row2">
           <select class="order-field t-abertura">
             <option value="">Abertura —</option>
@@ -204,12 +220,18 @@ function renderTypesList() {
     const body = el.querySelector('.doors-type__body');
     if (!body) return;
 
-    body.querySelector('.t-local').addEventListener('input', e => { t.local = e.target.value; syncSummary(el, t); });
-    body.querySelector('.t-largura').addEventListener('input', e => { t.largura = e.target.value; syncSummary(el, t); renderDoorsAll(); });
     body.querySelector('.t-altura').addEventListener('input', e => { t.altura = e.target.value; syncSummary(el, t); renderDoorsAll(); });
+    body.querySelector('.t-largura').addEventListener('input', e => { t.largura = e.target.value; syncSummary(el, t); renderDoorsAll(); });
     body.querySelector('.t-espessura').addEventListener('input', e => { t.espessura = e.target.value; syncSummary(el, t); renderDoorsAll(); });
+    body.querySelector('.t-g-largo').addEventListener('input', e => { t.gLargo = e.target.value; renderDoorsAll(); });
+    body.querySelector('.t-g-fino').addEventListener('input', e => { t.gFino = e.target.value; renderDoorsAll(); });
     body.querySelector('.t-travessao').addEventListener('change', e => { t.travessao = e.target.value; renderDoorsAll(); });
-    body.querySelector('.t-vidro').addEventListener('change', e => { t.vidro = e.target.checked; syncSummary(el, t); renderDoorsAll(); });
+    body.querySelector('.t-bite-stock').addEventListener('change', e => { t.biteStock = e.target.value; renderDoorsAll(); });
+    body.querySelector('.t-vidro').addEventListener('change', e => {
+      t.vidro = e.target.checked;
+      body.querySelector('.t-bite-stock').style.display = t.vidro ? 'block' : 'none';
+      syncSummary(el, t); renderDoorsAll();
+    });
     body.querySelector('.t-abertura').addEventListener('change', e => { t.abertura = e.target.value; renderDoorsAll(); });
     body.querySelector('.t-fechadura').addEventListener('input', e => { t.fechadura = e.target.value; renderDoorsAll(); });
     body.querySelector('.t-obs').addEventListener('input', e => { t.obs = e.target.value; renderDoorsAll(); });
@@ -244,7 +266,7 @@ function dpFmtNum(n) {
   return (Math.round(n*100)/100).toString().replace('.', ',');
 }
 
-function dpCalcType(t, biteStock) {
+function dpCalcType(t) {
   const aduelaPecasUnit = t.tipo === 'dupla' ? 3 : 2.5;
   let guarnLargoUnit = 4;
   let guarnFinoUnit = 0;
@@ -254,7 +276,7 @@ function dpCalcType(t, biteStock) {
   } else {
     guarnFinoUnit += 1;
   }
-  const biteQtyUnit = t.vidro ? (biteStock === '1830' ? 6 : 4) : 0;
+  const biteQtyUnit = t.vidro ? (t.biteStock === '1830' ? 6 : 4) : 0;
   return {
     aduelaPecas: aduelaPecasUnit * t.qty,
     guarnLargo: guarnLargoUnit * t.qty,
@@ -272,11 +294,10 @@ function renderDoorsAll() {
 function renderDoorsSummaryBar() {
   const bar = document.getElementById('dp-summary');
   if (!bar) return;
-  const biteStock = document.getElementById('dp-bite-stock')?.value || '1830';
 
   let portas = 0, aduela = 0, guarnicao = 0, bite = 0;
   dpTypes.forEach(t => {
-    const c = dpCalcType(t, biteStock);
+    const c = dpCalcType(t);
     if (t.tipo !== 'passagem') portas += c.leafCount;
     aduela += c.aduelaPecas;
     guarnicao += c.guarnLargo + c.guarnFino;
@@ -294,9 +315,6 @@ function renderDoorsSummaryBar() {
 function renderDoorsDocument() {
   const cliente = document.getElementById('dp-cliente').value;
   const material = document.getElementById('dp-material').value;
-  const gLargoMM = document.getElementById('dp-g-largo').value || '15';
-  const gFinoMM = document.getElementById('dp-g-fino').value || '10';
-  const biteStock = document.getElementById('dp-bite-stock').value;
 
   document.getElementById('dp-out-date').textContent = dpFmtDate(document.getElementById('dp-data').value);
   document.getElementById('dp-out-sub').textContent = [cliente, material].filter(Boolean).join(' — ') || 'Especificação de portas para produção';
@@ -306,7 +324,7 @@ function renderDoorsDocument() {
   const bomBody = document.getElementById('dp-out-bom');
 
   if (dpTypes.length === 0) {
-    doorsBody.innerHTML = `<tr><td colspan="9" class="doors-empty">Sem tipos de porta adicionados.</td></tr>`;
+    doorsBody.innerHTML = `<tr><td colspan="6" class="doors-empty">Sem tipos de porta adicionados.</td></tr>`;
     bomBody.innerHTML = `<tr><td class="doors-empty">Sem dados.</td></tr>`;
     return;
   }
@@ -314,16 +332,14 @@ function renderDoorsDocument() {
   const portaGroups = {};
   const aduelaGroups = {};
   const aduelaPassagemGroups = {};
-  let guarnLargoTotal = 0;
-  let guarnFinoTotal = 0;
-  let biteTotal = 0;
-  let anyVidro = false;
+  const guarnGroups = {}; // key: mm|perfil('largo'/'fino') -> total peças
+  const biteGroups = {};  // key: stock -> total peças
 
   doorsBody.innerHTML = dpTypes.map(t => {
-    const c = dpCalcType(t, biteStock);
+    const c = dpCalcType(t);
 
     if (t.tipo !== 'passagem') {
-      const key = `${t.largura || '?'}x${t.altura || '?'}|${t.tipo}`;
+      const key = `${t.altura || '?'}x${t.largura || '?'}|${t.tipo}`;
       portaGroups[key] = (portaGroups[key] || 0) + c.leafCount;
     }
 
@@ -334,19 +350,23 @@ function renderDoorsDocument() {
       aduelaGroups[esKey] = (aduelaGroups[esKey] || 0) + c.aduelaPecas;
     }
 
-    guarnLargoTotal += c.guarnLargo;
-    guarnFinoTotal += c.guarnFino;
-    biteTotal += c.biteQty;
-    if (t.vidro) anyVidro = true;
+    if (c.guarnLargo > 0) {
+      const gk = `${t.gLargo || '15'}|largo`;
+      guarnGroups[gk] = (guarnGroups[gk] || 0) + c.guarnLargo;
+    }
+    if (c.guarnFino > 0) {
+      const gk = `${t.gFino || '10'}|fino`;
+      guarnGroups[gk] = (guarnGroups[gk] || 0) + c.guarnFino;
+    }
+    if (c.biteQty > 0) {
+      biteGroups[t.biteStock] = (biteGroups[t.biteStock] || 0) + c.biteQty;
+    }
 
     const tipoLabel = t.tipo === 'dupla' ? 'Dupla' : (t.tipo === 'passagem' ? 'Passagem' : 'Simples');
     return `
       <tr>
         <td>${t.qty}</td>
-        <td>${dpEsc(t.local) || '—'}</td>
-        <td>${t.largura ? t.largura+'mm' : '—'}</td>
-        <td>${t.altura ? t.altura+'mm' : '—'}</td>
-        <td>${t.espessura ? t.espessura+'mm' : '—'}</td>
+        <td>${dpMedida(t) ? dpMedida(t) + 'MM' : '—'}</td>
         <td>${tipoLabel}</td>
         <td>${dpEsc(t.abertura) || '—'}</td>
         <td>${t.vidro ? 'Sim' : '—'}</td>
@@ -358,8 +378,8 @@ function renderDoorsDocument() {
   const bomRows = [];
   Object.keys(portaGroups).forEach(key => {
     const [dim] = key.split('|');
-    const [larg, alt] = dim.split('x');
-    bomRows.push([portaGroups[key], `PORTA${material ? ' ' + material.toUpperCase() : ''} ${larg}X${alt}MM`]);
+    const [alt, larg] = dim.split('x');
+    bomRows.push([portaGroups[key], `PORTA${material ? ' ' + material.toUpperCase() : ''} ${alt}X${larg}MM`]);
   });
   Object.keys(aduelaGroups).sort((a,b)=>a-b).forEach(es => {
     bomRows.push([dpFmtNum(aduelaGroups[es]), `ADUELA${material ? ' ' + material.toUpperCase() : ''} ${es}MM C/ REBAIXO (peças)`]);
@@ -367,12 +387,14 @@ function renderDoorsDocument() {
   Object.keys(aduelaPassagemGroups).sort((a,b)=>a-b).forEach(es => {
     bomRows.push([dpFmtNum(aduelaPassagemGroups[es]), `ADUELA DE PASSAGEM${material ? ' ' + material.toUpperCase() : ''} ${es}MM (peças)`]);
   });
-  if (guarnLargoTotal > 0) bomRows.push([dpFmtNum(guarnLargoTotal), `GUARNIÇÃO${material ? ' ' + material.toUpperCase() : ''} 2200X70X${gLargoMM}MM`]);
-  if (guarnFinoTotal > 0) bomRows.push([dpFmtNum(guarnFinoTotal), `GUARNIÇÃO${material ? ' ' + material.toUpperCase() : ''} 2200X70X${gFinoMM}MM`]);
-  if (anyVidro && biteTotal > 0) {
-    const stockLabel = biteStock === '1830' ? '1830X22X19MM' : '2750X19X22MM';
-    bomRows.push([dpFmtNum(biteTotal), `BITE MDF${material ? ' ' + material.toUpperCase() : ''} ${stockLabel}`]);
-  }
+  Object.keys(guarnGroups).sort().forEach(gk => {
+    const [mm] = gk.split('|');
+    bomRows.push([dpFmtNum(guarnGroups[gk]), `GUARNIÇÃO${material ? ' ' + material.toUpperCase() : ''} 2200X70X${mm}MM`]);
+  });
+  Object.keys(biteGroups).forEach(stock => {
+    const stockLabel = stock === '1830' ? '1830X22X19MM' : '2750X19X22MM';
+    bomRows.push([dpFmtNum(biteGroups[stock]), `BITE MDF${material ? ' ' + material.toUpperCase() : ''} ${stockLabel}`]);
+  });
 
   bomBody.innerHTML = bomRows.map(r => `<tr><td class="doors-doc__qty">${r[0]}</td><td>${r[1]}</td></tr>`).join('');
 }
