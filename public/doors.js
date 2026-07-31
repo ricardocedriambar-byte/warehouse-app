@@ -50,7 +50,8 @@ async function renderDoorsPanel() {
         <div class="section-label">Pré-visualização</div>
         <div class="doors-doc" id="dp-document">
           <div class="doors-doc__header">
-            <div>
+            <img class="doors-doc__logo" src="/icons/icon-512.png" alt="Cedriambar">
+            <div class="doors-doc__heading">
               <h2>Ficha de Encomenda</h2>
               <div class="doors-doc__sub" id="dp-out-sub">Especificação de portas para produção</div>
             </div>
@@ -158,8 +159,8 @@ function renderTypesList() {
           <button type="button" data-val="passagem" class="${t.tipo==='passagem'?'active':''}">Passagem</button>
         </div>
         <select class="order-field t-travessao" style="display:${t.tipo==='dupla'?'block':'none'};">
-          <option value="fino" ${t.travessao==='fino'?'selected':''}>Torça Fina</option>
-          <option value="largo" ${t.travessao==='largo'?'selected':''}>Torça Grossa</option>
+          <option value="fino" ${t.travessao==='fino'?'selected':''}>Travessão: perfil fino</option>
+          <option value="largo" ${t.travessao==='largo'?'selected':''}>Travessão: perfil largo</option>
         </select>
 
         <div class="doors-type__sub-label">Guarnição</div>
