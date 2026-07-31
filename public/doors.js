@@ -65,7 +65,7 @@ async function renderDoorsPanel() {
           <table class="doors-doc__table">
             <thead>
               <tr>
-                <th>Qtd</th><th>Medida (AxLxE)</th><th>Tipo</th>
+                <th>Qtd</th><th>Medida</th><th>Tipo</th>
                 <th>Abertura</th><th>Vidro</th><th>Fechad. / Obs.</th>
               </tr>
             </thead>
