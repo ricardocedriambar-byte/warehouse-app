@@ -158,8 +158,8 @@ function renderTypesList() {
           <button type="button" data-val="passagem" class="${t.tipo==='passagem'?'active':''}">Passagem</button>
         </div>
         <select class="order-field t-travessao" style="display:${t.tipo==='dupla'?'block':'none'};">
-          <option value="fino" ${t.travessao==='fino'?'selected':''}>Travessão: perfil fino</option>
-          <option value="largo" ${t.travessao==='largo'?'selected':''}>Travessão: perfil largo</option>
+          <option value="fino" ${t.travessao==='fino'?'selected':''}>Torça Fina</option>
+          <option value="largo" ${t.travessao==='largo'?'selected':''}>Torça Grossa</option>
         </select>
 
         <div class="doors-type__sub-label">Guarnição</div>
