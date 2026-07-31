@@ -96,15 +96,11 @@ async function renderDoorsPanel() {
 async function loadDoorMaterials() {
   const sel = document.getElementById('dp-material');
   try {
-    const res = await fetch('/api/items');
+    const res = await fetch('/api/door-materials');
     const data = await res.json();
-    const families = Array.from(new Set((data.items || [])
-      .map(it => (it.familia || '').trim())
-      .filter(Boolean)))
-      .sort((a, b) => a.localeCompare(b));
-    dpMaterials = families;
+    dpMaterials = data.materials || [];
     sel.innerHTML = `<option value="">Selecionar material…</option>` +
-      families.map(f => `<option value="${dpEsc(f)}">${dpEsc(f)}</option>`).join('');
+      dpMaterials.map(f => `<option value="${dpEsc(f)}">${dpEsc(f)}</option>`).join('');
   } catch (err) {
     console.error('Falha ao carregar materiais', err);
     sel.innerHTML = `<option value="">Não foi possível carregar materiais</option>`;
