@@ -53,7 +53,6 @@ async function renderDoorsPanel() {
             <img class="doors-doc__logo" src="/icons/icon-512.png" alt="Cedriambar">
             <div class="doors-doc__heading">
               <h2>Ficha de Encomenda</h2>
-              <div class="doors-doc__sub" id="dp-out-sub">Especificação de portas para produção</div>
             </div>
             <div class="doors-doc__date" id="dp-out-date">—</div>
           </div>
@@ -65,7 +64,7 @@ async function renderDoorsPanel() {
           <table class="doors-doc__table">
             <thead>
               <tr>
-                <th>Qtd</th><th>Medida (AxLxE)</th><th>Tipo</th>
+                <th>Qtd</th><th>Medida</th><th>Tipo</th>
                 <th>Abertura</th><th>Vidro</th><th>Fechad. / Obs.</th>
               </tr>
             </thead>
@@ -164,7 +163,6 @@ function renderTypesList() {
           <input type="number" class="order-field t-g-largo" placeholder="Perfil largo (mm)" value="${t.gLargo}">
           <input type="number" class="order-field t-g-fino" placeholder="Perfil fino (mm)" value="${t.gFino}">
         </div>
-        <div class="doors-hint">Mesma medida nos dois campos = junta tudo numa só peça</div>
 
         <label class="doors-checkbox">
           <input type="checkbox" class="t-vidro" ${t.vidro?'checked':''}>
