@@ -5,7 +5,7 @@
 // Print-only — nothing is saved to Sheets.
 
 let doorsRendered = false;
-let dpTypes = [];      // [{ id, qty, expanded, tipo, altura, largura, espessura, gLargo, gFino, travessao, vidro, biteStock, abertura, fechadura, obs }]
+let dpTypes = [];      // [{ id, qty, expanded, tipo, altura, largura, espessura, gLargo, gFino, vidro, biteStock, abertura, fechadura, obs }]
 let dpTypeSeq = 0;
 let dpMaterials = [];  // distinct familia values from inventory
 
@@ -65,7 +65,7 @@ async function renderDoorsPanel() {
           <table class="doors-doc__table">
             <thead>
               <tr>
-                <th>Qtd</th><th>Medida</th><th>Tipo</th>
+                <th>Qtd</th><th>Medida (AxLxE)</th><th>Tipo</th>
                 <th>Abertura</th><th>Vidro</th><th>Fechad. / Obs.</th>
               </tr>
             </thead>
@@ -113,7 +113,7 @@ function addDoorType(expanded) {
   dpTypes.push({
     id: dpTypeSeq, qty: 1, expanded: !!expanded, tipo: 'simples',
     altura: '', largura: '', espessura: '',
-    gLargo: 15, gFino: 10, travessao: 'fino',
+    gLargo: 15, gFino: 10,
     vidro: false, biteStock: '1830',
     abertura: '', fechadura: '', obs: ''
   });
@@ -158,16 +158,13 @@ function renderTypesList() {
           <button type="button" data-val="dupla" class="${t.tipo==='dupla'?'active':''}">Dupla</button>
           <button type="button" data-val="passagem" class="${t.tipo==='passagem'?'active':''}">Passagem</button>
         </div>
-        <select class="order-field t-travessao" style="display:${t.tipo==='dupla'?'block':'none'};">
-          <option value="fino" ${t.travessao==='fino'?'selected':''}>Travessão: perfil fino</option>
-          <option value="largo" ${t.travessao==='largo'?'selected':''}>Travessão: perfil largo</option>
-        </select>
 
         <div class="doors-type__sub-label">Guarnição</div>
         <div class="doors-row2">
           <input type="number" class="order-field t-g-largo" placeholder="Perfil largo (mm)" value="${t.gLargo}">
           <input type="number" class="order-field t-g-fino" placeholder="Perfil fino (mm)" value="${t.gFino}">
         </div>
+        <div class="doors-hint">Mesma medida nos dois campos = junta tudo numa só peça</div>
 
         <label class="doors-checkbox">
           <input type="checkbox" class="t-vidro" ${t.vidro?'checked':''}>
@@ -222,7 +219,6 @@ function renderTypesList() {
     body.querySelector('.t-espessura').addEventListener('input', e => { t.espessura = e.target.value; syncSummary(el, t); renderDoorsAll(); });
     body.querySelector('.t-g-largo').addEventListener('input', e => { t.gLargo = e.target.value; renderDoorsAll(); });
     body.querySelector('.t-g-fino').addEventListener('input', e => { t.gFino = e.target.value; renderDoorsAll(); });
-    body.querySelector('.t-travessao').addEventListener('change', e => { t.travessao = e.target.value; renderDoorsAll(); });
     body.querySelector('.t-bite-stock').addEventListener('change', e => { t.biteStock = e.target.value; renderDoorsAll(); });
     body.querySelector('.t-vidro').addEventListener('change', e => {
       t.vidro = e.target.checked;
@@ -237,7 +233,6 @@ function renderTypesList() {
     toggle.querySelectorAll('button').forEach(btn => {
       btn.addEventListener('click', () => {
         t.tipo = btn.dataset.val;
-        body.querySelector('.t-travessao').style.display = (t.tipo === 'dupla') ? 'block' : 'none';
         toggle.querySelectorAll('button').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         syncSummary(el, t);
@@ -265,14 +260,8 @@ function dpFmtNum(n) {
 
 function dpCalcType(t) {
   const aduelaPecasUnit = t.tipo === 'dupla' ? 3 : 2.5;
-  let guarnLargoUnit = 4;
-  let guarnFinoUnit = 0;
-  if (t.tipo === 'dupla') {
-    if (t.travessao === 'largo') guarnLargoUnit += 2;
-    else guarnFinoUnit += 2;
-  } else {
-    guarnFinoUnit += 1;
-  }
+  const guarnLargoUnit = 4; // laterais — sempre 4, independente do tipo
+  const guarnFinoUnit = t.tipo === 'dupla' ? 2 : 1; // travessão (dupla) ou peça única (simples/passagem)
   const biteQtyUnit = t.vidro ? (t.biteStock === '1830' ? 6 : 4) : 0;
   return {
     aduelaPecas: aduelaPecasUnit * t.qty,
@@ -329,7 +318,7 @@ function renderDoorsDocument() {
   const portaGroups = {};
   const aduelaGroups = {};
   const aduelaPassagemGroups = {};
-  const guarnGroups = {}; // key: mm|perfil('largo'/'fino') -> total peças
+  const guarnGroups = {}; // key: mm -> total peças (largo e fino fundem-se automaticamente quando a medida é igual)
   const biteGroups = {};  // key: stock -> total peças
 
   doorsBody.innerHTML = dpTypes.map(t => {
@@ -348,12 +337,12 @@ function renderDoorsDocument() {
     }
 
     if (c.guarnLargo > 0) {
-      const gk = `${t.gLargo || '15'}|largo`;
-      guarnGroups[gk] = (guarnGroups[gk] || 0) + c.guarnLargo;
+      const mm = t.gLargo || '15';
+      guarnGroups[mm] = (guarnGroups[mm] || 0) + c.guarnLargo;
     }
     if (c.guarnFino > 0) {
-      const gk = `${t.gFino || '10'}|fino`;
-      guarnGroups[gk] = (guarnGroups[gk] || 0) + c.guarnFino;
+      const mm = t.gFino || '10';
+      guarnGroups[mm] = (guarnGroups[mm] || 0) + c.guarnFino;
     }
     if (c.biteQty > 0) {
       biteGroups[t.biteStock] = (biteGroups[t.biteStock] || 0) + c.biteQty;
@@ -384,9 +373,8 @@ function renderDoorsDocument() {
   Object.keys(aduelaPassagemGroups).sort((a,b)=>a-b).forEach(es => {
     bomRows.push([dpFmtNum(aduelaPassagemGroups[es]), `ADUELA DE PASSAGEM${material ? ' ' + material.toUpperCase() : ''} ${es}MM (peças)`]);
   });
-  Object.keys(guarnGroups).sort().forEach(gk => {
-    const [mm] = gk.split('|');
-    bomRows.push([dpFmtNum(guarnGroups[gk]), `GUARNIÇÃO${material ? ' ' + material.toUpperCase() : ''} 2200X70X${mm}MM`]);
+  Object.keys(guarnGroups).sort((a,b)=>a-b).forEach(mm => {
+    bomRows.push([dpFmtNum(guarnGroups[mm]), `GUARNIÇÃO${material ? ' ' + material.toUpperCase() : ''} 2200X70X${mm}MM`]);
   });
   Object.keys(biteGroups).forEach(stock => {
     const stockLabel = stock === '1830' ? '1830X22X19MM' : '2750X19X22MM';

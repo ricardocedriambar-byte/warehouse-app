@@ -1158,6 +1158,9 @@ select.order-field { padding: 12px var(--sp-4); }
   font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px;
   color: var(--t3); margin: var(--sp-2) 0 4px;
 }
+.doors-hint {
+  font-size: 11px; color: var(--t3); font-style: italic; margin: -4px 0 var(--sp-2);
+}
 
 .doors-stepper { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
 .doors-stepper__btn {
