@@ -1119,23 +1119,51 @@ select.order-field { padding: 12px var(--sp-4); }
 .doors-textarea { resize: vertical; min-height: 56px; font-family: var(--font); }
 .doors-full-btn { width: 100%; margin-top: var(--sp-2); }
 
-.doors-card {
+/* Sticky running totals — always visible while adding/editing types */
+.doors-summary {
+  position: sticky; top: 0; z-index: 5;
+  display: flex; flex-wrap: wrap; gap: var(--sp-2);
+  background: var(--s1);
+  border-bottom: 1px solid var(--b1);
+  padding: var(--sp-2) var(--sp-4);
+  margin: 0 calc(-1 * var(--sp-4)) var(--sp-3);
+}
+.doors-summary__chip {
+  background: var(--s3); border: 1px solid var(--b1); border-radius: 999px;
+  padding: 4px 10px; font-size: 12px; color: var(--t2); font-family: var(--mono);
+}
+
+.doors-adv-toggle {
+  background: none; border: none; color: var(--t3); font-size: 12px;
+  padding: var(--sp-2) 0; text-align: left;
+}
+.doors-adv-body { padding-top: var(--sp-1); }
+
+/* Type card — collapsed header (qty stepper + summary) + expandable body */
+.doors-type {
   background: var(--s2);
   border: 1px solid var(--b1);
   border-radius: var(--r-md);
-  padding: var(--sp-3);
   margin-bottom: var(--sp-3);
+  overflow: hidden;
 }
-.doors-card__title {
-  display: flex; justify-content: space-between; align-items: center;
-  font-family: var(--mono); font-size: 12px; text-transform: uppercase;
-  letter-spacing: 0.4px; color: var(--timber-300); margin-bottom: var(--sp-2);
+.doors-type__row { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-2) var(--sp-3); }
+.doors-type__summary {
+  flex: 1; font-size: 13px; color: var(--t2); line-height: 1.3;
 }
-.doors-card__remove {
-  background: none; border: none; color: var(--danger); font-size: 12px;
-  opacity: 0.85;
+.doors-type__del { background: none; border: none; color: var(--danger); font-size: 14px; padding: 4px 6px; opacity: 0.85; }
+.doors-type__body { padding: 0 var(--sp-3) var(--sp-3); }
+.doors-type__body .order-field { margin-bottom: var(--sp-2); }
+
+.doors-stepper { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.doors-stepper__btn {
+  width: 26px; height: 26px; border-radius: var(--r-sm);
+  background: var(--s3); border: 1px solid var(--b1); color: var(--t1);
+  font-size: 16px; line-height: 1; display: flex; align-items: center; justify-content: center;
 }
-.doors-card .order-field { margin-bottom: var(--sp-2); }
+.doors-stepper__val {
+  min-width: 20px; text-align: center; font-family: var(--mono); font-size: 14px; color: var(--t1);
+}
 
 .doors-tipo-toggle { display: flex; gap: var(--sp-2); margin-bottom: var(--sp-2); }
 .doors-tipo-toggle button {
