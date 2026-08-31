@@ -72,7 +72,7 @@ function renderFornecedoresList() {
 
   list.innerHTML = fornecedores.map(fornecedor => `
     <button class="resources-supplier-row" data-fornecedor="${resEsc(fornecedor)}">
-      <span class="resources-supplier-row__icon">🏭</span>
+      <span class="resources-supplier-row__icon" data-icon-for="${resEsc(fornecedor)}">🏭</span>
       <span class="resources-supplier-row__nome">${resEsc(fornecedor)}</span>
       <span class="resources-supplier-row__count">${resourcesGroups.get(fornecedor).length}</span>
       <span class="resources-supplier-row__chevron">›</span>
@@ -82,6 +82,47 @@ function renderFornecedoresList() {
   list.querySelectorAll('.resources-supplier-row').forEach(btn => {
     btn.addEventListener('click', () => renderFornecedorDocs(btn.dataset.fornecedor));
   });
+
+  fornecedores.forEach(applyFornecedorLogo);
+}
+
+// Best-effort: looks up the supplier's domain by name via Clearbit's free
+// Autocomplete API, then uses Google's favicon service to grab an icon for
+// that domain — both public, no API key. Falls back to the 🏭 emoji when
+// no match is found or either request fails. Results are cached in memory
+// so switching back to this list doesn't re-fetch.
+const resourcesLogoCache = new Map(); // fornecedor -> domain | null
+
+async function resolveFornecedorDomain(fornecedor) {
+  if (resourcesLogoCache.has(fornecedor)) return resourcesLogoCache.get(fornecedor);
+  try {
+    const res = await fetch(`https://autocomplete.clearbit.com/v1/companies/suggest?query=${encodeURIComponent(fornecedor)}`);
+    if (!res.ok) throw new Error('lookup failed');
+    const matches = await res.json();
+    const domain = matches?.[0]?.domain || null;
+    resourcesLogoCache.set(fornecedor, domain);
+    return domain;
+  } catch {
+    resourcesLogoCache.set(fornecedor, null);
+    return null;
+  }
+}
+
+async function applyFornecedorLogo(fornecedor) {
+  const domain = await resolveFornecedorDomain(fornecedor);
+  if (!domain) return;
+
+  // The icon element may have been re-rendered (e.g. list re-sorted) by
+  // the time this resolves — always re-query rather than holding a stale ref.
+  const icon = document.querySelector(`.resources-supplier-row__icon[data-icon-for="${CSS.escape(fornecedor)}"]`);
+  if (!icon) return;
+
+  const img = new Image();
+  img.className = 'resources-supplier-row__logo';
+  img.alt = '';
+  img.src = `https://www.google.com/s2/favicons?sz=64&domain=${encodeURIComponent(domain)}`;
+  img.onload = () => icon.replaceChildren(img);
+  // onerror: leave the emoji fallback in place.
 }
 
 function renderFornecedorDocs(fornecedor) {

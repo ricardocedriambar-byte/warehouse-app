@@ -1298,7 +1298,15 @@ table.doors-doc__table tr:nth-child(even) td { background: #faf6ec; }
   transition: background var(--tx);
 }
 .resources-supplier-row:active { background: var(--s3); }
-.resources-supplier-row__icon { font-size: 18px; flex: 0 0 auto; }
+.resources-supplier-row__icon {
+  font-size: 18px; flex: 0 0 auto;
+  width: 22px; height: 22px;
+  display: flex; align-items: center; justify-content: center;
+}
+.resources-supplier-row__logo {
+  width: 20px; height: 20px; border-radius: 4px;
+  object-fit: contain; background: #fff;
+}
 .resources-supplier-row__nome {
   flex: 1; min-width: 0; font-size: 14px; font-weight: 600;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
