@@ -102,6 +102,9 @@ async function showLoginScreen() {
 function applyRoleRestrictions() {
   const newOrderBtn = $('#new-order-btn');
   if (newOrderBtn) newOrderBtn.style.display = auth.isWarehouse() ? 'none' : '';
+
+  const recursosBtn = $('#recursos-tab-btn');
+  if (recursosBtn) recursosBtn.style.display = auth.isVendedor() ? '' : 'none';
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1499,6 +1502,10 @@ function init() {
         loadOrders({ silent: true }).then(() => renderOrdersList());
       }
       if (target === 'portas') renderDoorsPanel();
+      if (target === 'recursos') {
+        if (auth.isWarehouse()) { setView('scan', { pushHistory: false }); return; }
+        renderResourcesPanel();
+      }
     });
   });
 
