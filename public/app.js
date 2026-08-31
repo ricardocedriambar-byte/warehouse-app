@@ -1506,6 +1506,7 @@ function init() {
         if (auth.isWarehouse()) { setView('scan', { pushHistory: false }); return; }
         renderResourcesPanel();
       }
+      if (target === 'viaturas') renderViaturasPanel();
     });
   });
 
