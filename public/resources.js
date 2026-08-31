@@ -7,6 +7,7 @@
 
 let resourcesRendered = false;
 let resourcesGroups = null; // Map<fornecedor, item[]>, filled once on first load
+let resourcesLogoOverrides = {}; // { fornecedor: url }, from the LogosFornecedores sheet tab
 
 async function renderResourcesPanel() {
   const root = document.getElementById('recursos-panel');
@@ -53,6 +54,7 @@ async function loadResources() {
       if (!resourcesGroups.has(item.fornecedor)) resourcesGroups.set(item.fornecedor, []);
       resourcesGroups.get(item.fornecedor).push(item);
     }
+    resourcesLogoOverrides = data.logos || {};
 
     renderFornecedoresList();
   } catch (err) {
@@ -109,19 +111,28 @@ async function resolveFornecedorDomain(fornecedor) {
 }
 
 async function applyFornecedorLogo(fornecedor) {
+  const override = resourcesLogoOverrides[fornecedor];
+  if (override) {
+    setFornecedorIcon(fornecedor, override);
+    return;
+  }
+
   const domain = await resolveFornecedorDomain(fornecedor);
   if (!domain) return;
+  setFornecedorIcon(fornecedor, `https://www.google.com/s2/favicons?sz=64&domain=${encodeURIComponent(domain)}`);
+}
 
-  // The icon element may have been re-rendered (e.g. list re-sorted) by
-  // the time this resolves — always re-query rather than holding a stale ref.
-  const icon = document.querySelector(`.resources-supplier-row__icon[data-icon-for="${CSS.escape(fornecedor)}"]`);
-  if (!icon) return;
-
+function setFornecedorIcon(fornecedor, src) {
   const img = new Image();
   img.className = 'resources-supplier-row__logo';
   img.alt = '';
-  img.src = `https://www.google.com/s2/favicons?sz=64&domain=${encodeURIComponent(domain)}`;
-  img.onload = () => icon.replaceChildren(img);
+  img.src = src;
+  img.onload = () => {
+    // The icon element may have been re-rendered (e.g. list re-sorted) by
+    // the time this resolves — always re-query rather than holding a stale ref.
+    const icon = document.querySelector(`.resources-supplier-row__icon[data-icon-for="${CSS.escape(fornecedor)}"]`);
+    if (icon) icon.replaceChildren(img);
+  };
   // onerror: leave the emoji fallback in place.
 }
 
