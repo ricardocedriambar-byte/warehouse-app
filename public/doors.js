@@ -53,6 +53,7 @@ async function renderDoorsPanel() {
             <img class="doors-doc__logo" src="/icons/icon-512.png" alt="Cedriambar">
             <div class="doors-doc__heading">
               <h2>Ficha de Encomenda</h2>
+              <div class="doors-doc__sub" id="dp-out-sub"></div>
             </div>
             <div class="doors-doc__date" id="dp-out-date">—</div>
           </div>
