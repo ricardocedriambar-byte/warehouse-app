@@ -98,7 +98,7 @@ function renderFornecedorDocs(fornecedor) {
   const docs = resourcesGroups.get(fornecedor) || [];
 
   list.innerHTML = docs.map(item => `
-    <a class="resources-row" href="${resEsc(item.url)}" target="_blank" rel="noopener">
+    <button class="resources-row" data-url="${resEsc(item.url)}" data-nome="${resEsc(item.nome)}">
       <span class="resources-row__icon">📄</span>
       <span class="resources-row__main">
         <span class="resources-row__nome">${resEsc(item.nome)}</span>
@@ -107,6 +107,33 @@ function renderFornecedorDocs(fornecedor) {
             ${item.tipo ? resEsc(item.tipo) : ''}${item.tipo && item.atualizado ? ' · ' : ''}${item.atualizado ? resEsc(item.atualizado) : ''}
           </span>` : ''}
       </span>
-    </a>
+    </button>
   `).join('');
+
+  list.querySelectorAll('.resources-row').forEach(btn => {
+    btn.addEventListener('click', () => openResourceViewer(btn.dataset.url, btn.dataset.nome));
+  });
+}
+
+// Opens the PDF in an in-app iframe overlay rather than navigating out
+// to drive.google.com — on mobile, top-level navigation to a Drive link
+// gets intercepted by the Drive app and forces a Google sign-in prompt.
+// An iframe embed never triggers that handoff, and since Google serves
+// the bytes directly (not through our own API), there's no file-size
+// limit either.
+function openResourceViewer(url, nome) {
+  const root = document.getElementById('recursos-panel');
+  if (!root) return;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'resources-viewer';
+  overlay.innerHTML = `
+    <div class="resources-viewer__header">
+      <span class="resources-viewer__title">${resEsc(nome)}</span>
+      <button class="resources-viewer__close" aria-label="Fechar">✕</button>
+    </div>
+    <iframe class="resources-viewer__frame" src="${resEsc(url)}" allow="autoplay"></iframe>
+  `;
+  overlay.querySelector('.resources-viewer__close').addEventListener('click', () => overlay.remove());
+  root.appendChild(overlay);
 }
