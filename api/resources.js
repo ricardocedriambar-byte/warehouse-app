@@ -1,11 +1,10 @@
 // api/resources.js
 //
 // GET /api/resources -> list of price-list/catalog PDFs for the
-// "Recursos" tab. Source of truth is the "Recursos" tab in Sheets
-// (Fornecedor, Nome, URL, Tipo, Atualizado) — Ricardo edits it
-// directly there, pasting Drive share links.
+// "Recursos" tab, auto-discovered from the Drive folder structure
+// Recursos/<Fornecedor>/<documento>.pdf.
 
-const { getResources } = require('../lib/sheets');
+const { getResources } = require('../lib/resources');
 
 module.exports = async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
