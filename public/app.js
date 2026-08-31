@@ -140,6 +140,7 @@ const viewHistory = [];
 function setView(name, { pushHistory = true } = {}) {
   $$('.view').forEach(el => el.dataset.active = String(el.dataset.view === name));
   $$('.tabbar__btn').forEach(el => el.dataset.active = String(el.dataset.goto === name));
+  $('.topbar')?.classList.toggle('topbar--hidden', name === 'viaturas');
   if (name !== 'scan') stopScanner();
   if (pushHistory) {
     viewHistory.push(name);
