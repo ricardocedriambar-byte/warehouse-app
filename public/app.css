@@ -1270,12 +1270,46 @@ table.doors-doc__table tr:nth-child(even) td { background: #faf6ec; }
    RECURSOS (price lists / supplier catalogs)
    ═══════════════════════════════════════════════════════════ */
 .resources-view { padding: var(--sp-4); padding-bottom: 48px; }
-.resources-view__header { margin-bottom: var(--sp-5); }
+.resources-view__header {
+  margin-bottom: var(--sp-5);
+  display: flex; align-items: center; gap: var(--sp-2);
+}
 .resources-view__title { font-size: 18px; margin: 0 0 4px; color: var(--t1); }
 
-.resources-list { display: flex; flex-direction: column; gap: var(--sp-5); }
+.resources-back-btn {
+  appearance: none; border: none; background: none;
+  color: var(--t2); font-size: 13px; font-weight: 600;
+  padding: 4px 0; margin: 0 0 4px; cursor: pointer;
+}
+.resources-back-btn:active { color: var(--t1); }
+
+.resources-list { display: flex; flex-direction: column; gap: var(--sp-2); }
 .resources__group { display: flex; flex-direction: column; gap: var(--sp-2); }
 
+/* Level 1: compact clickable supplier rows */
+.resources-supplier-row {
+  display: flex; align-items: center; gap: var(--sp-3);
+  width: 100%; appearance: none; border: none;
+  background: var(--s1);
+  border-radius: var(--r-md);
+  padding: var(--sp-3) var(--sp-4);
+  color: var(--t1);
+  font: inherit; text-align: left; cursor: pointer;
+  transition: background var(--tx);
+}
+.resources-supplier-row:active { background: var(--s3); }
+.resources-supplier-row__icon { font-size: 18px; flex: 0 0 auto; }
+.resources-supplier-row__nome {
+  flex: 1; min-width: 0; font-size: 14px; font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.resources-supplier-row__count {
+  flex: 0 0 auto; font-family: var(--mono); font-size: 11px; color: var(--t3);
+  background: var(--s3); border-radius: var(--r-sm); padding: 2px 7px;
+}
+.resources-supplier-row__chevron { flex: 0 0 auto; color: var(--t3); font-size: 16px; }
+
+/* Level 2: documents within a supplier */
 .resources-row {
   display: flex; align-items: center; gap: var(--sp-3);
   background: var(--s1);

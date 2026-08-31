@@ -1,10 +1,12 @@
 // resources.js — Recursos (tabelas de preços e catálogos de fornecedores)
 //
-// Read-only tab: the PDFs themselves live in Google Drive. This just
-// lists them, grouped by fornecedor, sourced from the "Recursos" tab
-// in Sheets. Vendedor-only — wired in app.js / hidden via applyRoleRestrictions().
+// Read-only tab: the PDFs themselves live in Google Drive, auto-discovered
+// from the folder structure (see lib/resources.js). Two-level view: a
+// compact clickable list of fornecedores, then that fornecedor's documents.
+// Vendedor-only — wired in app.js / hidden via applyRoleRestrictions().
 
 let resourcesRendered = false;
+let resourcesGroups = null; // Map<fornecedor, item[]>, filled once on first load
 
 async function renderResourcesPanel() {
   const root = document.getElementById('recursos-panel');
@@ -14,7 +16,7 @@ async function renderResourcesPanel() {
 
   root.innerHTML = `
     <div class="resources-view">
-      <div class="resources-view__header">
+      <div class="resources-view__header" id="resources-header">
         <h2 class="resources-view__title">Recursos</h2>
       </div>
       <div id="resources-list" class="resources-list">
@@ -42,37 +44,69 @@ async function loadResources() {
     const items = data.resources || [];
 
     if (!items.length) {
-      list.innerHTML = `<div class="resources__empty">Ainda não há recursos. Adiciona linhas na aba "Recursos" da folha.</div>`;
+      list.innerHTML = `<div class="resources__empty">Ainda não há recursos. Adiciona PDFs às pastas dos fornecedores no Drive.</div>`;
       return;
     }
 
-    const groups = new Map();
+    resourcesGroups = new Map();
     for (const item of items) {
-      if (!groups.has(item.fornecedor)) groups.set(item.fornecedor, []);
-      groups.get(item.fornecedor).push(item);
+      if (!resourcesGroups.has(item.fornecedor)) resourcesGroups.set(item.fornecedor, []);
+      resourcesGroups.get(item.fornecedor).push(item);
     }
 
-    const sortedFornecedores = Array.from(groups.keys()).sort((a, b) => a.localeCompare(b, 'pt'));
-
-    list.innerHTML = sortedFornecedores.map(fornecedor => `
-      <div class="resources__group">
-        <div class="section-label">${resEsc(fornecedor)}</div>
-        ${groups.get(fornecedor).map(item => `
-          <a class="resources-row" href="${resEsc(item.url)}" target="_blank" rel="noopener">
-            <span class="resources-row__icon">📄</span>
-            <span class="resources-row__main">
-              <span class="resources-row__nome">${resEsc(item.nome)}</span>
-              ${item.tipo || item.atualizado ? `
-                <span class="resources-row__meta">
-                  ${item.tipo ? resEsc(item.tipo) : ''}${item.tipo && item.atualizado ? ' · ' : ''}${item.atualizado ? resEsc(item.atualizado) : ''}
-                </span>` : ''}
-            </span>
-          </a>
-        `).join('')}
-      </div>
-    `).join('');
+    renderFornecedoresList();
   } catch (err) {
     console.error('Falha ao carregar recursos', err);
     list.innerHTML = `<div class="resources__empty" style="color:var(--danger)">Não foi possível carregar os recursos.</div>`;
   }
+}
+
+function renderFornecedoresList() {
+  const header = document.getElementById('resources-header');
+  const list = document.getElementById('resources-list');
+  if (!header || !list) return;
+
+  header.innerHTML = `<h2 class="resources-view__title">Recursos</h2>`;
+
+  const fornecedores = Array.from(resourcesGroups.keys()).sort((a, b) => a.localeCompare(b, 'pt'));
+
+  list.innerHTML = fornecedores.map(fornecedor => `
+    <button class="resources-supplier-row" data-fornecedor="${resEsc(fornecedor)}">
+      <span class="resources-supplier-row__icon">🏭</span>
+      <span class="resources-supplier-row__nome">${resEsc(fornecedor)}</span>
+      <span class="resources-supplier-row__count">${resourcesGroups.get(fornecedor).length}</span>
+      <span class="resources-supplier-row__chevron">›</span>
+    </button>
+  `).join('');
+
+  list.querySelectorAll('.resources-supplier-row').forEach(btn => {
+    btn.addEventListener('click', () => renderFornecedorDocs(btn.dataset.fornecedor));
+  });
+}
+
+function renderFornecedorDocs(fornecedor) {
+  const header = document.getElementById('resources-header');
+  const list = document.getElementById('resources-list');
+  if (!header || !list) return;
+
+  header.innerHTML = `
+    <button class="resources-back-btn" id="resources-back-btn" aria-label="Voltar">‹ Fornecedores</button>
+    <h2 class="resources-view__title">${resEsc(fornecedor)}</h2>
+  `;
+  document.getElementById('resources-back-btn').addEventListener('click', renderFornecedoresList);
+
+  const docs = resourcesGroups.get(fornecedor) || [];
+
+  list.innerHTML = docs.map(item => `
+    <a class="resources-row" href="${resEsc(item.url)}" target="_blank" rel="noopener">
+      <span class="resources-row__icon">📄</span>
+      <span class="resources-row__main">
+        <span class="resources-row__nome">${resEsc(item.nome)}</span>
+        ${item.tipo || item.atualizado ? `
+          <span class="resources-row__meta">
+            ${item.tipo ? resEsc(item.tipo) : ''}${item.tipo && item.atualizado ? ' · ' : ''}${item.atualizado ? resEsc(item.atualizado) : ''}
+          </span>` : ''}
+      </span>
+    </a>
+  `).join('');
 }
