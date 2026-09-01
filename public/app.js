@@ -123,6 +123,7 @@ const orderState = {
   currentOrder: null,
   newOrderLines: [],
   newOrderClient: null,
+  newOrderType: 'Normal',
   filterActive: true,
 };
 
@@ -710,7 +711,7 @@ function renderOrdersList() {
     return `
       <button class="order-card" data-order-id="${order.orderId}">
         <div class="order-card__top">
-          <span class="order-card__id">${order.orderId}</span>
+          <span class="order-card__id">${order.orderId}${order.orderType === 'Portas' ? ' <span class="order-card__type-badge">Portas</span>' : ''}</span>
           <span class="order-card__status" data-status="${order.status}">${order.status}</span>
         </div>
         <div class="order-card__client">${order.clientName || '—'}</div>
@@ -736,6 +737,8 @@ async function openOrderDetail(orderId) {
 function renderOrderCreate() {
   orderState.newOrderLines  = [];
   orderState.newOrderClient = null;
+  orderState.newOrderType   = 'Normal';
+  resetDoorsBuilder();
 
   const panel = $('#order-create-panel');
   if (!panel) return;
@@ -743,6 +746,14 @@ function renderOrderCreate() {
   panel.innerHTML = `
     <button class="back-btn" id="create-back-btn">‹ Encomendas</button>
     <div class="order-create">
+
+      <div class="order-create__section">
+        <div class="section-label">Tipo de encomenda</div>
+        <div class="doors-tipo-toggle" id="order-type-toggle">
+          <button type="button" data-val="Normal" class="active">Normal</button>
+          <button type="button" data-val="Portas">Portas</button>
+        </div>
+      </div>
 
       <div class="order-create__section">
         <div class="section-label">Cliente</div>
@@ -757,13 +768,17 @@ function renderOrderCreate() {
         </div>
       </div>
 
-      <div class="order-create__section">
+      <div class="order-create__section" id="order-lines-section">
         <div class="section-label">Artigos</div>
         <div class="order-lines" id="order-lines-list"></div>
         <button class="add-item-btn" id="add-item-btn">
           <svg viewBox="0 0 24 24" width="16" height="16"><path d="M12 5v14m-7-7h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>
           Adicionar artigo
         </button>
+      </div>
+
+      <div class="order-create__section" id="order-doors-section" style="display:none">
+        <div id="dp-embed-root"></div>
       </div>
 
       <div class="order-create__section">
@@ -783,6 +798,20 @@ function renderOrderCreate() {
   panel.querySelector('#new-client-btn').addEventListener('click', () => showNewClientForm());
   panel.querySelector('#save-draft-btn').addEventListener('click', () => submitOrder('Rascunho'));
   panel.querySelector('#send-order-btn').addEventListener('click', () => submitOrder('Enviado'));
+
+  const typeToggle = panel.querySelector('#order-type-toggle');
+  typeToggle.querySelectorAll('button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      orderState.newOrderType = btn.dataset.val;
+      typeToggle.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+
+      const isPortas = orderState.newOrderType === 'Portas';
+      panel.querySelector('#order-lines-section').style.display = isPortas ? 'none' : '';
+      panel.querySelector('#order-doors-section').style.display = isPortas ? '' : 'none';
+      if (isPortas) renderDoorsBuilder(panel.querySelector('#dp-embed-root'));
+    });
+  });
 
   wireClientSearch(panel);
   renderOrderLines();
@@ -1209,9 +1238,27 @@ async function submitOrder(targetStatus) {
   const client     = orderState.newOrderClient;
   const orderNotes = $('#order-notes-input')?.value.trim() || '';
   const salesperson = auth.user?.name || '';
+  const isPortas = orderState.newOrderType === 'Portas';
 
-  if (!client)                           { toast('Selecione um cliente', 'error'); return; }
-  if (orderState.newOrderLines.length === 0) { toast('Adicione pelo menos um artigo', 'error'); return; }
+  if (!client) { toast('Selecione um cliente', 'error'); return; }
+
+  let payload;
+  if (isPortas) {
+    if (!doorsHasContent()) { toast('Adicione pelo menos um tipo de porta', 'error'); return; }
+    const { lines, doorsData } = getDoorsOrderPayload();
+    if (lines.length === 0) { toast('Preencha as medidas para gerar os materiais', 'error'); return; }
+    payload = {
+      clientId: client.id, clientName: client.name, salesperson, orderNotes,
+      status: targetStatus, orderType: 'Portas', doorsData, lines
+    };
+  } else {
+    if (orderState.newOrderLines.length === 0) { toast('Adicione pelo menos um artigo', 'error'); return; }
+    payload = {
+      clientId: client.id, clientName: client.name, salesperson, orderNotes,
+      status: targetStatus, orderType: 'Normal',
+      lines: orderState.newOrderLines.map(line => ({ ...line, qtyOrdered: baseQty(line) }))
+    };
+  }
 
   const sendBtn  = $('#send-order-btn');
   const draftBtn = $('#save-draft-btn');
@@ -1219,11 +1266,7 @@ async function submitOrder(targetStatus) {
   if (draftBtn) draftBtn.disabled = true;
 
   try {
-    const data = await apiPost('/api/orders', {
-      clientId: client.id, clientName: client.name, salesperson, orderNotes,
-      status: targetStatus,
-      lines: orderState.newOrderLines.map(line => ({ ...line, qtyOrdered: baseQty(line) }))
-    });
+    const data = await apiPost('/api/orders', payload);
     await loadOrders({ silent: true });
     renderOrdersList();
     setView('orders');
@@ -1272,15 +1315,22 @@ function renderOrderPick(order, isDraft) {
     <button class="back-btn" id="pick-back-btn">‹ Encomendas</button>
     <div class="order-pick">
       <div class="order-pick__header">
-        <div class="order-pick__id">${order.orderId} · <span style="color:var(--t3)">${order.status}</span></div>
+        <div class="order-pick__id">${order.orderId}${order.orderType === 'Portas' ? ' <span class="order-card__type-badge">Portas</span>' : ''} · <span style="color:var(--t3)">${order.status}</span></div>
         <div class="order-pick__client">${order.clientName}</div>
         ${order.orderNotes ? `<div style="font-size:13px;color:var(--t3);margin-top:4px">${order.orderNotes}</div>` : ''}
+        ${order.orderType === 'Portas' && order.doorsData
+          ? `<div style="display:flex;gap:8px;margin-top:8px">
+               <button class="btn-ghost" id="view-ficha-btn">Ver ficha</button>
+               <button class="btn-ghost" id="print-ficha-btn" style="display:none">Imprimir</button>
+             </div>` : ''}
         <div class="order-pick__progress-row">
           <span class="order-pick__progress-label">${pickedCount} de ${order.lines.length} separados</span>
           ${!isDraft && order.status === 'Enviado'
             ? `<button class="orders-filter-btn active" id="start-picking-btn">Iniciar separação</button>` : ''}
         </div>
       </div>
+
+      <div class="doors-viewer-slot" id="ficha-viewer-slot" style="display:none"></div>
 
       ${isDraft ? `
         <div style="display:flex;gap:8px;margin-bottom:16px">
@@ -1309,11 +1359,11 @@ function renderOrderPick(order, isDraft) {
           return `
             <div class="pick-line" data-sku="${line.sku}" data-done="${done}" data-per-unit-area="${perUnitArea}">
               <div class="pick-line__top">
-                <span class="pick-line__sku">${line.sku}</span>
+                ${order.orderType === 'Portas' ? '' : `<span class="pick-line__sku">${line.sku}</span>`}
                 <span class="pick-line__qty-badge" data-done="${done}">${line.qtyPicked}/${line.qtyOrdered} ${line.unidade||'un'}${unitsEquiv}</span>
               </div>
               <div class="pick-line__desc">${line.descricao}</div>
-              <div class="pick-line__dims">${fmtNumber(line.comprimento,0)}×${fmtNumber(line.largura,0)}×${fmtNumber(line.espessura,0)}mm · ${fmtCurrency(line.unitPrice)}/${line.unidade||'un'}</div>
+              ${order.orderType === 'Portas' ? '' : `<div class="pick-line__dims">${fmtNumber(line.comprimento,0)}×${fmtNumber(line.largura,0)}×${fmtNumber(line.espessura,0)}mm · ${fmtCurrency(line.unitPrice)}/${line.unidade||'un'}</div>`}
               ${order.status === 'Em separação' ? `
                 <div class="pick-line__actions">
                   <div class="pick-line__qty-group">
@@ -1349,6 +1399,28 @@ function renderOrderPick(order, isDraft) {
   panel.querySelector('#pick-back-btn').addEventListener('click', () => {
     setView('orders'); renderOrdersList();
   });
+
+  // Portas: show/hide the read-only printable ficha, rendered from the
+  // order's saved doorsData JSON.
+  const fichaBtn = panel.querySelector('#view-ficha-btn');
+  const printFichaBtn = panel.querySelector('#print-ficha-btn');
+  if (fichaBtn) {
+    const slot = panel.querySelector('#ficha-viewer-slot');
+    fichaBtn.addEventListener('click', () => {
+      const showing = slot.style.display !== 'none';
+      if (showing) {
+        slot.style.display = 'none';
+        fichaBtn.textContent = 'Ver ficha';
+        if (printFichaBtn) printFichaBtn.style.display = 'none';
+      } else {
+        renderSavedDoorsDocument(slot, order);
+        slot.style.display = '';
+        fichaBtn.textContent = 'Esconder ficha';
+        if (printFichaBtn) printFichaBtn.style.display = '';
+      }
+    });
+    printFichaBtn?.addEventListener('click', () => window.print());
+  }
 
   // Draft: send to warehouse
   const draftSendBtn = panel.querySelector('#draft-send-btn');
@@ -1502,7 +1574,6 @@ function init() {
         renderOrdersList();
         loadOrders({ silent: true }).then(() => renderOrdersList());
       }
-      if (target === 'portas') renderDoorsPanel();
       if (target === 'recursos') {
         if (auth.isWarehouse()) { setView('scan', { pushHistory: false }); return; }
         renderResourcesPanel();
