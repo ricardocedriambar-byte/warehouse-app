@@ -1,101 +1,106 @@
-// doors.js — Ficha de Encomenda de Portas (Cedriambar)
-// Model: "tipos de porta" (spec × quantity). Guarnição/bite chosen per type.
-// Dimensions read as ALTURA×LARGURA×ESPESSURA, matching the paper convention.
-// Material is picked from the live inventory (familia), not free text.
-// Print-only — nothing is saved to Sheets.
+// doors.js — Ficha de Encomenda de Portas
+//
+// Embedded inside "Nova Encomenda" as the "Portas" order type (not a
+// standalone tab). Model: "tipos de porta" (spec × quantity). Guarnição/
+// bite chosen per type. Dimensions read as ALTURA×LARGURA×ESPESSURA,
+// matching the paper convention. On submit, the aggregated BOM becomes
+// the order's line items (with synthetic SKUs, no stock impact — see
+// lib/orders.js), and the full structured spec is saved as JSON on the
+// order (doorsData) so the printable ficha can be regenerated later from
+// the order's own detail screen.
 
-let doorsRendered = false;
 let dpTypes = [];      // [{ id, qty, expanded, tipo, altura, largura, espessura, gLargo, gFino, vidro, biteStock, abertura, fechadura, obs }]
 let dpTypeSeq = 0;
-let dpMaterials = [];  // distinct familia values from inventory
+let dpMaterials = [];  // material/finish names, from the MateriaisPortas sheet tab
+let dpMounted = false;
 
-async function renderDoorsPanel() {
-  const root = document.getElementById('portas-panel');
-  if (!root) return;
-  if (doorsRendered) { renderDoorsAll(); return; }
-  doorsRendered = true;
+// Clears all door-type state — called each time "Nova Encomenda" opens,
+// so a previous Portas order's data never bleeds into a new one.
+function resetDoorsBuilder() {
+  dpTypes = [];
+  dpTypeSeq = 0;
+  dpMounted = false;
+}
 
-  root.innerHTML = `
-    <div class="doors-view">
+// Mounts the builder UI into `container` (a div living inside the
+// Nova Encomenda form). Safe to call multiple times if the person
+// toggles the Tipo switch back and forth — state is preserved across
+// re-mounts within the same order-create session.
+function renderDoorsBuilder(container) {
+  if (!container) return;
+
+  container.innerHTML = `
+    <div class="doors-embed">
       <div class="doors-summary" id="dp-summary"></div>
 
-      <div class="doors-view__header">
-        <h2 class="doors-view__title">Ficha de Encomenda — Portas</h2>
+      <div class="doors-row2">
+        <input type="text" id="dp-obra" class="order-field" placeholder="Obra / referência (opcional)">
+        <input type="date" id="dp-data" class="order-field">
       </div>
+      <select id="dp-material" class="order-field">
+        <option value="">A carregar materiais…</option>
+      </select>
 
-      <div class="order-create__section">
-        <div class="doors-row2">
-          <input type="text" id="dp-cliente" class="order-field" placeholder="Cliente / obra">
-          <input type="date" id="dp-data" class="order-field">
-        </div>
-        <select id="dp-material" class="order-field">
-          <option value="">A carregar materiais…</option>
-        </select>
-      </div>
+      <div class="section-label" style="margin-top:16px">Tipos de porta</div>
+      <div id="dp-types-container"></div>
+      <button type="button" id="dp-add-type" class="btn-ghost doors-full-btn">+ Adicionar tipo de porta</button>
 
-      <div class="order-create__section">
-        <div class="section-label">Tipos de porta</div>
-        <div id="dp-types-container"></div>
-        <button type="button" id="dp-add-type" class="btn-ghost doors-full-btn">+ Adicionar tipo de porta</button>
-      </div>
+      <div class="section-label" style="margin-top:16px">Observações gerais</div>
+      <textarea id="dp-obs-gerais" class="order-field doors-textarea" placeholder="Mecanizar blocos, envernizar, prazo, etc."></textarea>
 
-      <div class="order-create__section">
-        <div class="section-label">Observações gerais</div>
-        <textarea id="dp-obs-gerais" class="order-field doors-textarea" placeholder="Mecanizar blocos, envernizar, prazo, etc."></textarea>
-      </div>
-
-      <button type="button" id="dp-print-btn" class="btn-primary doors-full-btn">Imprimir / Guardar PDF</button>
-
-      <div class="order-create__section">
-        <div class="section-label">Pré-visualização</div>
-        <div class="doors-doc" id="dp-document">
-          <div class="doors-doc__header">
-            <img class="doors-doc__logo" src="/icons/icon-512.png" alt="Cedriambar">
-            <div class="doors-doc__heading">
-              <h2>Ficha de Encomenda</h2>
-              <div class="doors-doc__sub" id="dp-out-sub"></div>
-            </div>
-            <div class="doors-doc__date" id="dp-out-date">—</div>
+      <div class="section-label" style="margin-top:16px">Pré-visualização</div>
+      <div class="doors-doc" id="dp-document">
+        <div class="doors-doc__header">
+          <img class="doors-doc__logo" src="/icons/icon-512.png" alt="Cedriambar">
+          <div class="doors-doc__heading">
+            <h2>Ficha de Encomenda</h2>
+            <div class="doors-doc__sub" id="dp-out-sub"></div>
           </div>
-
-          <div class="doors-doc__section-title">Materiais a separar</div>
-          <table class="doors-doc__bom" id="dp-out-bom"></table>
-
-          <div class="doors-doc__section-title">Detalhe por tipo</div>
-          <table class="doors-doc__table">
-            <thead>
-              <tr>
-                <th>Qtd</th><th>Medida</th><th>Tipo</th>
-                <th>Abertura</th><th>Vidro</th><th>Fechad. / Obs.</th>
-              </tr>
-            </thead>
-            <tbody id="dp-out-doors"></tbody>
-          </table>
-
-          <div class="doors-doc__obs-label">Observações gerais</div>
-          <div class="doors-doc__obs-value" id="dp-out-obs">&nbsp;</div>
+          <div class="doors-doc__date" id="dp-out-date">—</div>
         </div>
+
+        <div class="doors-doc__section-title">Materiais a separar</div>
+        <table class="doors-doc__bom" id="dp-out-bom"></table>
+
+        <div class="doors-doc__section-title">Detalhe por tipo</div>
+        <table class="doors-doc__table">
+          <thead>
+            <tr>
+              <th>Qtd</th><th>Medida</th><th>Tipo</th>
+              <th>Abertura</th><th>Vidro</th><th>Fechad. / Obs.</th>
+            </tr>
+          </thead>
+          <tbody id="dp-out-doors"></tbody>
+        </table>
+
+        <div class="doors-doc__obs-label">Observações gerais</div>
+        <div class="doors-doc__obs-value" id="dp-out-obs">&nbsp;</div>
       </div>
     </div>
   `;
 
-  ['dp-cliente','dp-data','dp-material','dp-obs-gerais'].forEach(id => {
+  ['dp-obra','dp-data','dp-material','dp-obs-gerais'].forEach(id => {
     const el = document.getElementById(id);
     el.addEventListener('input', renderDoorsAll);
     el.addEventListener('change', renderDoorsAll);
   });
 
   document.getElementById('dp-add-type').addEventListener('click', () => addDoorType(true));
-  document.getElementById('dp-print-btn').addEventListener('click', () => window.print());
 
-  document.getElementById('dp-data').valueAsDate = new Date();
-  addDoorType(true);
+  if (!dpMounted) {
+    document.getElementById('dp-data').valueAsDate = new Date();
+    if (dpTypes.length === 0) addDoorType(true);
+    dpMounted = true;
+  } else {
+    renderTypesList();
+  }
   renderDoorsAll();
   loadDoorMaterials();
 }
 
 async function loadDoorMaterials() {
   const sel = document.getElementById('dp-material');
+  if (!sel) return;
   try {
     const res = await fetch('/api/door-materials');
     const data = await res.json();
@@ -134,6 +139,7 @@ function dpMedida(t) {
 
 function renderTypesList() {
   const container = document.getElementById('dp-types-container');
+  if (!container) return;
   container.innerHTML = dpTypes.map(t => `
     <div class="doors-type" data-id="${t.id}">
       <div class="doors-type__row">
@@ -271,6 +277,67 @@ function dpCalcType(t) {
   };
 }
 
+// Pure BOM computation — no DOM reads, so it's reusable both for the live
+// preview and for building the order's actual line items on submit.
+// Returns [{ qty, descricao }, ...].
+function computeDoorsBom(types, material) {
+  const portaGroups = {};
+  const aduelaGroups = {};
+  const aduelaPassagemGroups = {};
+  const guarnGroups = {};
+  const biteGroups = {};
+
+  types.forEach(t => {
+    const c = dpCalcType(t);
+
+    if (t.tipo !== 'passagem') {
+      const key = `${t.altura || '?'}x${t.largura || '?'}|${t.tipo}`;
+      portaGroups[key] = (portaGroups[key] || 0) + c.leafCount;
+    }
+
+    const esKey = t.espessura || '?';
+    if (t.tipo === 'passagem') {
+      aduelaPassagemGroups[esKey] = (aduelaPassagemGroups[esKey] || 0) + c.aduelaPecas;
+    } else {
+      aduelaGroups[esKey] = (aduelaGroups[esKey] || 0) + c.aduelaPecas;
+    }
+
+    if (c.guarnLargo > 0) {
+      const mm = t.gLargo || '15';
+      guarnGroups[mm] = (guarnGroups[mm] || 0) + c.guarnLargo;
+    }
+    if (c.guarnFino > 0) {
+      const mm = t.gFino || '10';
+      guarnGroups[mm] = (guarnGroups[mm] || 0) + c.guarnFino;
+    }
+    if (c.biteQty > 0) {
+      biteGroups[t.biteStock] = (biteGroups[t.biteStock] || 0) + c.biteQty;
+    }
+  });
+
+  const rows = [];
+  Object.keys(portaGroups).forEach(key => {
+    const [dim] = key.split('|');
+    const [alt, larg] = dim.split('x');
+    rows.push({ qty: portaGroups[key], descricao: `PORTA${material ? ' ' + material.toUpperCase() : ''} ${alt}X${larg}MM` });
+  });
+  Object.keys(aduelaGroups).sort((a,b)=>a-b).forEach(es => {
+    rows.push({ qty: aduelaGroups[es], descricao: `ADUELA${material ? ' ' + material.toUpperCase() : ''} ${es}MM C/ REBAIXO (peças)` });
+  });
+  Object.keys(aduelaPassagemGroups).sort((a,b)=>a-b).forEach(es => {
+    rows.push({ qty: aduelaPassagemGroups[es], descricao: `ADUELA DE PASSAGEM${material ? ' ' + material.toUpperCase() : ''} ${es}MM (peças)` });
+  });
+  Object.keys(guarnGroups).sort((a,b)=>a-b).forEach(mm => {
+    rows.push({ qty: guarnGroups[mm], descricao: `GUARNIÇÃO${material ? ' ' + material.toUpperCase() : ''} 2200X70X${mm}MM` });
+  });
+  Object.keys(biteGroups).forEach(stock => {
+    const stockLabel = stock === '1830' ? '1830X22X19MM' : '2750X19X22MM';
+    rows.push({ qty: biteGroups[stock], descricao: `BITE MDF${material ? ' ' + material.toUpperCase() : ''} ${stockLabel}` });
+  });
+
+  return rows;
+}
+
 function renderDoorsAll() {
   renderDoorsSummaryBar();
   renderDoorsDocument();
@@ -298,11 +365,17 @@ function renderDoorsSummaryBar() {
 }
 
 function renderDoorsDocument() {
-  const cliente = document.getElementById('dp-cliente').value;
-  const material = document.getElementById('dp-material').value;
+  const obraEl = document.getElementById('dp-obra');
+  const materialEl = document.getElementById('dp-material');
+  if (!obraEl || !materialEl) return;
+
+  const obra = obraEl.value;
+  const material = materialEl.value;
+  const clientName = (typeof orderState !== 'undefined' && orderState.newOrderClient) ? orderState.newOrderClient.name : '';
 
   document.getElementById('dp-out-date').textContent = dpFmtDate(document.getElementById('dp-data').value);
-  document.getElementById('dp-out-sub').textContent = [cliente, material].filter(Boolean).join(' — ') || 'Especificação de portas para produção';
+  document.getElementById('dp-out-sub').textContent =
+    [clientName, obra, material].filter(Boolean).join(' — ') || 'Especificação de portas para produção';
   document.getElementById('dp-out-obs').innerHTML = dpEsc(document.getElementById('dp-obs-gerais').value).replace(/\n/g,'<br>') || '&nbsp;';
 
   const doorsBody = document.getElementById('dp-out-doors');
@@ -314,39 +387,7 @@ function renderDoorsDocument() {
     return;
   }
 
-  const portaGroups = {};
-  const aduelaGroups = {};
-  const aduelaPassagemGroups = {};
-  const guarnGroups = {}; // key: mm -> total peças (largo e fino fundem-se automaticamente quando a medida é igual)
-  const biteGroups = {};  // key: stock -> total peças
-
   doorsBody.innerHTML = dpTypes.map(t => {
-    const c = dpCalcType(t);
-
-    if (t.tipo !== 'passagem') {
-      const key = `${t.altura || '?'}x${t.largura || '?'}|${t.tipo}`;
-      portaGroups[key] = (portaGroups[key] || 0) + c.leafCount;
-    }
-
-    const esKey = t.espessura || '?';
-    if (t.tipo === 'passagem') {
-      aduelaPassagemGroups[esKey] = (aduelaPassagemGroups[esKey] || 0) + c.aduelaPecas;
-    } else {
-      aduelaGroups[esKey] = (aduelaGroups[esKey] || 0) + c.aduelaPecas;
-    }
-
-    if (c.guarnLargo > 0) {
-      const mm = t.gLargo || '15';
-      guarnGroups[mm] = (guarnGroups[mm] || 0) + c.guarnLargo;
-    }
-    if (c.guarnFino > 0) {
-      const mm = t.gFino || '10';
-      guarnGroups[mm] = (guarnGroups[mm] || 0) + c.guarnFino;
-    }
-    if (c.biteQty > 0) {
-      biteGroups[t.biteStock] = (biteGroups[t.biteStock] || 0) + c.biteQty;
-    }
-
     const tipoLabel = t.tipo === 'dupla' ? 'Dupla' : (t.tipo === 'passagem' ? 'Passagem' : 'Simples');
     return `
       <tr>
@@ -360,25 +401,92 @@ function renderDoorsDocument() {
     `;
   }).join('');
 
-  const bomRows = [];
-  Object.keys(portaGroups).forEach(key => {
-    const [dim] = key.split('|');
-    const [alt, larg] = dim.split('x');
-    bomRows.push([portaGroups[key], `PORTA${material ? ' ' + material.toUpperCase() : ''} ${alt}X${larg}MM`]);
-  });
-  Object.keys(aduelaGroups).sort((a,b)=>a-b).forEach(es => {
-    bomRows.push([dpFmtNum(aduelaGroups[es]), `ADUELA${material ? ' ' + material.toUpperCase() : ''} ${es}MM C/ REBAIXO (peças)`]);
-  });
-  Object.keys(aduelaPassagemGroups).sort((a,b)=>a-b).forEach(es => {
-    bomRows.push([dpFmtNum(aduelaPassagemGroups[es]), `ADUELA DE PASSAGEM${material ? ' ' + material.toUpperCase() : ''} ${es}MM (peças)`]);
-  });
-  Object.keys(guarnGroups).sort((a,b)=>a-b).forEach(mm => {
-    bomRows.push([dpFmtNum(guarnGroups[mm]), `GUARNIÇÃO${material ? ' ' + material.toUpperCase() : ''} 2200X70X${mm}MM`]);
-  });
-  Object.keys(biteGroups).forEach(stock => {
-    const stockLabel = stock === '1830' ? '1830X22X19MM' : '2750X19X22MM';
-    bomRows.push([dpFmtNum(biteGroups[stock]), `BITE MDF${material ? ' ' + material.toUpperCase() : ''} ${stockLabel}`]);
-  });
+  const bomRows = computeDoorsBom(dpTypes, material);
+  bomBody.innerHTML = bomRows.map(r => `<tr><td class="doors-doc__qty">${dpFmtNum(r.qty)}</td><td>${r.descricao}</td></tr>`).join('');
+}
 
-  bomBody.innerHTML = bomRows.map(r => `<tr><td class="doors-doc__qty">${r[0]}</td><td>${r[1]}</td></tr>`).join('');
+// Packages the current builder state into what createOrder() needs:
+// order lines (the BOM, with synthetic SKUs so they never touch real
+// inventory stock) plus the full structured spec for later reprinting.
+function getDoorsOrderPayload() {
+  const material = document.getElementById('dp-material')?.value || '';
+  const obra = document.getElementById('dp-obra')?.value || '';
+  const dataFicha = document.getElementById('dp-data')?.value || '';
+  const obsGerais = document.getElementById('dp-obs-gerais')?.value || '';
+  const bomRows = computeDoorsBom(dpTypes, material);
+
+  const lines = bomRows.map((r, i) => ({
+    sku: `PORTA-${i + 1}`,
+    descricao: r.descricao,
+    qtyOrdered: r.qty,
+    unidade: 'un',
+    unitPrice: 0,
+    comprimento: '', largura: '', espessura: '',
+    discountPct: 0
+  }));
+
+  const doorsData = {
+    obra, material, dataFicha, obsGerais,
+    types: dpTypes.map(t => ({ ...t })),
+    bomRows
+  };
+
+  return { lines, doorsData };
+}
+
+function doorsHasContent() {
+  return dpTypes.length > 0 && dpTypes.some(t => t.qty > 0);
+}
+
+// ═══════════════════════════════════════════════════════════
+// SAVED ORDER VIEW — renders the read-only ficha for a Portas order
+// that's already been submitted, from its stored doorsData JSON.
+// ═══════════════════════════════════════════════════════════
+function renderSavedDoorsDocument(container, order) {
+  const d = order.doorsData;
+  if (!container || !d) return;
+
+  const bomRowsHtml = (d.bomRows || [])
+    .map(r => `<tr><td class="doors-doc__qty">${dpFmtNum(r.qty)}</td><td>${r.descricao}</td></tr>`)
+    .join('') || `<tr><td class="doors-empty">Sem dados.</td></tr>`;
+
+  const typesHtml = (d.types || []).map(t => {
+    const tipoLabel = t.tipo === 'dupla' ? 'Dupla' : (t.tipo === 'passagem' ? 'Passagem' : 'Simples');
+    return `
+      <tr>
+        <td>${t.qty}</td>
+        <td>${dpMedida(t) ? dpMedida(t) + 'MM' : '—'}</td>
+        <td>${tipoLabel}</td>
+        <td>${dpEsc(t.abertura) || '—'}</td>
+        <td>${t.vidro ? 'Sim' : '—'}</td>
+        <td>${[dpEsc(t.fechadura), dpEsc(t.obs)].filter(Boolean).join(' · ') || '—'}</td>
+      </tr>`;
+  }).join('') || `<tr><td colspan="6" class="doors-empty">Sem tipos de porta.</td></tr>`;
+
+  container.innerHTML = `
+    <div class="doors-doc" id="dp-saved-document">
+      <div class="doors-doc__header">
+        <img class="doors-doc__logo" src="/icons/icon-512.png" alt="Cedriambar">
+        <div class="doors-doc__heading">
+          <h2>Ficha de Encomenda</h2>
+          <div class="doors-doc__sub">${dpEsc([order.clientName, d.obra, d.material].filter(Boolean).join(' — ')) || 'Especificação de portas para produção'}</div>
+        </div>
+        <div class="doors-doc__date">${dpFmtDate(d.dataFicha)}</div>
+      </div>
+
+      <div class="doors-doc__section-title">Materiais a separar</div>
+      <table class="doors-doc__bom">${bomRowsHtml}</table>
+
+      <div class="doors-doc__section-title">Detalhe por tipo</div>
+      <table class="doors-doc__table">
+        <thead>
+          <tr><th>Qtd</th><th>Medida</th><th>Tipo</th><th>Abertura</th><th>Vidro</th><th>Fechad. / Obs.</th></tr>
+        </thead>
+        <tbody>${typesHtml}</tbody>
+      </table>
+
+      <div class="doors-doc__obs-label">Observações gerais</div>
+      <div class="doors-doc__obs-value">${d.obsGerais ? dpEsc(d.obsGerais).replace(/\n/g,'<br>') : '&nbsp;'}</div>
+    </div>
+  `;
 }
