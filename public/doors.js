@@ -37,9 +37,6 @@ function renderDoorsBuilder(container) {
         <input type="text" id="dp-obra" class="order-field" placeholder="Obra / referência (opcional)">
         <input type="date" id="dp-data" class="order-field">
       </div>
-      <select id="dp-material" class="order-field">
-        <option value="">A carregar materiais…</option>
-      </select>
 
       <div class="section-label" style="margin-top:16px">Tipos de porta</div>
       <div id="dp-types-container"></div>
@@ -79,7 +76,7 @@ function renderDoorsBuilder(container) {
     </div>
   `;
 
-  ['dp-obra','dp-data','dp-material','dp-obs-gerais'].forEach(id => {
+  ['dp-obra','dp-data','dp-obs-gerais'].forEach(id => {
     const el = document.getElementById(id);
     el.addEventListener('input', renderDoorsAll);
     el.addEventListener('change', renderDoorsAll);
@@ -99,24 +96,22 @@ function renderDoorsBuilder(container) {
 }
 
 async function loadDoorMaterials() {
-  const sel = document.getElementById('dp-material');
-  if (!sel) return;
   try {
     const res = await fetch('/api/door-materials');
     const data = await res.json();
     dpMaterials = data.materials || [];
-    sel.innerHTML = `<option value="">Selecionar material…</option>` +
-      dpMaterials.map(f => `<option value="${dpEsc(f)}">${dpEsc(f)}</option>`).join('');
   } catch (err) {
     console.error('Falha ao carregar materiais', err);
-    sel.innerHTML = `<option value="">Não foi possível carregar materiais</option>`;
+    dpMaterials = [];
   }
+  renderTypesList();
 }
 
 function addDoorType(expanded) {
   dpTypeSeq++;
   dpTypes.push({
     id: dpTypeSeq, qty: 1, expanded: !!expanded, tipo: 'simples',
+    material: '',
     altura: '', largura: '', espessura: '',
     gLargo: 15, gFino: 10,
     vidro: false, biteStock: '1830',
@@ -129,6 +124,7 @@ function addDoorType(expanded) {
 function dpSummaryText(t) {
   const tipoLabel = t.tipo === 'dupla' ? 'Dupla' : (t.tipo === 'passagem' ? 'Passagem' : 'Simples');
   const parts = [tipoLabel, dpMedida(t) || 'sem medidas'];
+  if (t.material) parts.push(t.material);
   if (t.vidro) parts.push('vidro');
   return parts.join(' · ');
 }
@@ -158,6 +154,13 @@ function renderTypesList() {
           <input type="number" class="order-field t-largura" placeholder="Largura mm" value="${t.largura}">
           <input type="number" class="order-field t-espessura" placeholder="Espessura mm" value="${t.espessura}">
         </div>
+
+        <select class="order-field t-material">
+          ${dpMaterials.length === 0
+            ? `<option value="">A carregar materiais…</option>`
+            : `<option value="">Selecionar material…</option>` +
+              dpMaterials.map(f => `<option value="${dpEsc(f)}" ${t.material===f?'selected':''}>${dpEsc(f)}</option>`).join('')}
+        </select>
 
         <div class="doors-tipo-toggle">
           <button type="button" data-val="simples" class="${t.tipo==='simples'?'active':''}">Simples</button>
@@ -222,6 +225,7 @@ function renderTypesList() {
     body.querySelector('.t-altura').addEventListener('input', e => { t.altura = e.target.value; syncSummary(el, t); renderDoorsAll(); });
     body.querySelector('.t-largura').addEventListener('input', e => { t.largura = e.target.value; syncSummary(el, t); renderDoorsAll(); });
     body.querySelector('.t-espessura').addEventListener('input', e => { t.espessura = e.target.value; syncSummary(el, t); renderDoorsAll(); });
+    body.querySelector('.t-material').addEventListener('change', e => { t.material = e.target.value; syncSummary(el, t); renderDoorsAll(); });
     body.querySelector('.t-g-largo').addEventListener('input', e => { t.gLargo = e.target.value; renderDoorsAll(); });
     body.querySelector('.t-g-fino').addEventListener('input', e => { t.gFino = e.target.value; renderDoorsAll(); });
     body.querySelector('.t-bite-stock').addEventListener('change', e => { t.biteStock = e.target.value; renderDoorsAll(); });
@@ -279,8 +283,11 @@ function dpCalcType(t) {
 
 // Pure BOM computation — no DOM reads, so it's reusable both for the live
 // preview and for building the order's actual line items on submit.
+// Material now lives per door type, so every group key includes it —
+// otherwise two types in different materials but the same dimensions
+// would wrongly merge into one BOM line.
 // Returns [{ qty, descricao }, ...].
-function computeDoorsBom(types, material) {
+function computeDoorsBom(types) {
   const portaGroups = {};
   const aduelaGroups = {};
   const aduelaPassagemGroups = {};
@@ -289,13 +296,14 @@ function computeDoorsBom(types, material) {
 
   types.forEach(t => {
     const c = dpCalcType(t);
+    const mat = t.material || '';
 
     if (t.tipo !== 'passagem') {
-      const key = `${t.altura || '?'}x${t.largura || '?'}|${t.tipo}`;
+      const key = `${t.altura || '?'}x${t.largura || '?'}|${t.tipo}|${mat}`;
       portaGroups[key] = (portaGroups[key] || 0) + c.leafCount;
     }
 
-    const esKey = t.espessura || '?';
+    const esKey = `${t.espessura || '?'}|${mat}`;
     if (t.tipo === 'passagem') {
       aduelaPassagemGroups[esKey] = (aduelaPassagemGroups[esKey] || 0) + c.aduelaPecas;
     } else {
@@ -303,39 +311,44 @@ function computeDoorsBom(types, material) {
     }
 
     if (c.guarnLargo > 0) {
-      const mm = t.gLargo || '15';
+      const mm = `${t.gLargo || '15'}|${mat}`;
       guarnGroups[mm] = (guarnGroups[mm] || 0) + c.guarnLargo;
     }
     if (c.guarnFino > 0) {
-      const mm = t.gFino || '10';
+      const mm = `${t.gFino || '10'}|${mat}`;
       guarnGroups[mm] = (guarnGroups[mm] || 0) + c.guarnFino;
     }
     if (c.biteQty > 0) {
-      biteGroups[t.biteStock] = (biteGroups[t.biteStock] || 0) + c.biteQty;
+      const key = `${t.biteStock}|${mat}`;
+      biteGroups[key] = (biteGroups[key] || 0) + c.biteQty;
     }
   });
 
   const rows = [];
   Object.keys(portaGroups).forEach(key => {
-    const [dim] = key.split('|');
+    const [dim, , mat] = key.split('|');
     const [alt, larg] = dim.split('x');
-    rows.push({ qty: portaGroups[key], descricao: `PORTA${material ? ' ' + material.toUpperCase() : ''} ${alt}X${larg}MM` });
+    rows.push({ qty: portaGroups[key], descricao: `PORTA${mat ? ' ' + mat.toUpperCase() : ''} ${alt}X${larg}MM` });
   });
-  Object.keys(aduelaGroups).sort((a,b)=>a-b).forEach(es => {
-    rows.push({ qty: aduelaGroups[es], descricao: `ADUELA${material ? ' ' + material.toUpperCase() : ''} ${es}MM C/ REBAIXO (peças)` });
+  Object.keys(aduelaGroups).sort().forEach(key => {
+    const [es, mat] = key.split('|');
+    rows.push({ qty: aduelaGroups[key], descricao: `ADUELA${mat ? ' ' + mat.toUpperCase() : ''} ${es}MM C/ REBAIXO (peças)` });
   });
-  Object.keys(aduelaPassagemGroups).sort((a,b)=>a-b).forEach(es => {
-    rows.push({ qty: aduelaPassagemGroups[es], descricao: `ADUELA DE PASSAGEM${material ? ' ' + material.toUpperCase() : ''} ${es}MM (peças)` });
+  Object.keys(aduelaPassagemGroups).sort().forEach(key => {
+    const [es, mat] = key.split('|');
+    rows.push({ qty: aduelaPassagemGroups[key], descricao: `ADUELA DE PASSAGEM${mat ? ' ' + mat.toUpperCase() : ''} ${es}MM (peças)` });
   });
-  Object.keys(guarnGroups).sort((a,b)=>a-b).forEach(mm => {
-    rows.push({ qty: guarnGroups[mm], descricao: `GUARNIÇÃO${material ? ' ' + material.toUpperCase() : ''} 2200X70X${mm}MM` });
+  Object.keys(guarnGroups).sort().forEach(key => {
+    const [mm, mat] = key.split('|');
+    rows.push({ qty: guarnGroups[key], descricao: `GUARNIÇÃO${mat ? ' ' + mat.toUpperCase() : ''} 2200X70X${mm}MM` });
   });
-  Object.keys(biteGroups).forEach(stock => {
+  Object.keys(biteGroups).forEach(key => {
+    const [stock, mat] = key.split('|');
     const stockLabel = stock === '1830' ? '1830X22X19MM' : '2750X19X22MM';
-    rows.push({ qty: biteGroups[stock], descricao: `BITE MDF${material ? ' ' + material.toUpperCase() : ''} ${stockLabel}` });
+    rows.push({ qty: biteGroups[key], descricao: `BITE MDF${mat ? ' ' + mat.toUpperCase() : ''} ${stockLabel}` });
   });
 
-  return rows;
+  return rows.map(r => ({ ...r, qty: Math.round(r.qty * 100) / 100 }));
 }
 
 function renderDoorsAll() {
@@ -366,16 +379,14 @@ function renderDoorsSummaryBar() {
 
 function renderDoorsDocument() {
   const obraEl = document.getElementById('dp-obra');
-  const materialEl = document.getElementById('dp-material');
-  if (!obraEl || !materialEl) return;
+  if (!obraEl) return;
 
   const obra = obraEl.value;
-  const material = materialEl.value;
   const clientName = (typeof orderState !== 'undefined' && orderState.newOrderClient) ? orderState.newOrderClient.name : '';
 
   document.getElementById('dp-out-date').textContent = dpFmtDate(document.getElementById('dp-data').value);
   document.getElementById('dp-out-sub').textContent =
-    [clientName, obra, material].filter(Boolean).join(' — ') || 'Especificação de portas para produção';
+    [clientName, obra].filter(Boolean).join(' — ') || 'Especificação de portas para produção';
   document.getElementById('dp-out-obs').innerHTML = dpEsc(document.getElementById('dp-obs-gerais').value).replace(/\n/g,'<br>') || '&nbsp;';
 
   const doorsBody = document.getElementById('dp-out-doors');
@@ -393,7 +404,7 @@ function renderDoorsDocument() {
       <tr>
         <td>${t.qty}</td>
         <td>${dpMedida(t) ? dpMedida(t) + 'MM' : '—'}</td>
-        <td>${tipoLabel}</td>
+        <td>${tipoLabel}${t.material ? ' · ' + dpEsc(t.material) : ''}</td>
         <td>${dpEsc(t.abertura) || '—'}</td>
         <td>${t.vidro ? 'Sim' : '—'}</td>
         <td>${[dpEsc(t.fechadura), dpEsc(t.obs)].filter(Boolean).join(' · ') || '—'}</td>
@@ -401,7 +412,7 @@ function renderDoorsDocument() {
     `;
   }).join('');
 
-  const bomRows = computeDoorsBom(dpTypes, material);
+  const bomRows = computeDoorsBom(dpTypes);
   bomBody.innerHTML = bomRows.map(r => `<tr><td class="doors-doc__qty">${dpFmtNum(r.qty)}</td><td>${r.descricao}</td></tr>`).join('');
 }
 
@@ -409,11 +420,10 @@ function renderDoorsDocument() {
 // order lines (the BOM, with synthetic SKUs so they never touch real
 // inventory stock) plus the full structured spec for later reprinting.
 function getDoorsOrderPayload() {
-  const material = document.getElementById('dp-material')?.value || '';
   const obra = document.getElementById('dp-obra')?.value || '';
   const dataFicha = document.getElementById('dp-data')?.value || '';
   const obsGerais = document.getElementById('dp-obs-gerais')?.value || '';
-  const bomRows = computeDoorsBom(dpTypes, material);
+  const bomRows = computeDoorsBom(dpTypes);
 
   const lines = bomRows.map((r, i) => ({
     sku: `PORTA-${i + 1}`,
@@ -426,7 +436,7 @@ function getDoorsOrderPayload() {
   }));
 
   const doorsData = {
-    obra, material, dataFicha, obsGerais,
+    obra, dataFicha, obsGerais,
     types: dpTypes.map(t => ({ ...t })),
     bomRows
   };
@@ -456,7 +466,7 @@ function renderSavedDoorsDocument(container, order) {
       <tr>
         <td>${t.qty}</td>
         <td>${dpMedida(t) ? dpMedida(t) + 'MM' : '—'}</td>
-        <td>${tipoLabel}</td>
+        <td>${tipoLabel}${t.material ? ' · ' + dpEsc(t.material) : ''}</td>
         <td>${dpEsc(t.abertura) || '—'}</td>
         <td>${t.vidro ? 'Sim' : '—'}</td>
         <td>${[dpEsc(t.fechadura), dpEsc(t.obs)].filter(Boolean).join(' · ') || '—'}</td>
@@ -469,7 +479,7 @@ function renderSavedDoorsDocument(container, order) {
         <img class="doors-doc__logo" src="/icons/icon-512.png" alt="Cedriambar">
         <div class="doors-doc__heading">
           <h2>Ficha de Encomenda</h2>
-          <div class="doors-doc__sub">${dpEsc([order.clientName, d.obra, d.material].filter(Boolean).join(' — ')) || 'Especificação de portas para produção'}</div>
+          <div class="doors-doc__sub">${dpEsc([order.clientName, d.obra].filter(Boolean).join(' — ')) || 'Especificação de portas para produção'}</div>
         </div>
         <div class="doors-doc__date">${dpFmtDate(d.dataFicha)}</div>
       </div>
