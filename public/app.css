@@ -1274,8 +1274,8 @@ table.doors-doc__table tr:nth-child(even) td { background: #faf6ec; }
 /* Print: only the document preview should print, full page, no app chrome */
 @media print {
   body * { visibility: hidden; }
-  .doors-doc, .doors-doc *, .order-note-ficha, .order-note-ficha * { visibility: visible; }
-  .doors-doc, .order-note-ficha {
+  .doors-doc, .doors-doc * { visibility: visible; }
+  .doors-doc {
     position: absolute; top: 0; left: 0; width: 100%;
     border-radius: 0; padding: 10mm 12mm; box-shadow: none;
   }
@@ -1283,41 +1283,35 @@ table.doors-doc__table tr:nth-child(even) td { background: #faf6ec; }
 }
 
 /* ═══════════════════════════════════════════════════════════
-   ORDER NOTE FICHA — mirrors lib/pdf-order-note.js's printed layout
+   SEND PREVIEW OVERLAY — shows the real generated PDF before an order
+   actually gets sent to the warehouse
    ═══════════════════════════════════════════════════════════ */
-.order-note-ficha {
-  background: #fff; color: #1a1a1a; border-radius: var(--r-md);
-  padding: 20px; font-family: Calibri, Arial, sans-serif;
+.send-preview-overlay {
+  position: fixed; inset: 0; z-index: 200;
+  background: var(--bg);
+  display: flex; flex-direction: column;
 }
-.onf-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; border-bottom: 2px solid #6b5416; padding-bottom: 10px; margin-bottom: 14px; }
-.onf-logo { height: 34px; width: auto; }
-.onf-company { text-align: right; }
-.onf-company-name { font-weight: 700; color: #1f3319; font-size: 13px; }
-.onf-company-line { font-size: 11px; color: #6b6b63; }
-.onf-title-row { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 16px; }
-.onf-title { font-size: 22px; font-weight: 400; margin: 0; color: #1a1a1a; }
-.onf-meta { text-align: right; font-size: 12px; color: #6b6b63; line-height: 1.6; }
-.onf-section-title { font-size: 12px; font-weight: 700; color: #1a1a1a; text-transform: uppercase; letter-spacing: 0.5px; margin: 14px 0 8px; }
-.onf-columns { display: flex; gap: 24px; }
-.onf-col { flex: 1; min-width: 0; }
-.onf-field { border-bottom: 1px solid #ddd; padding: 4px 0 6px; margin-bottom: 4px; }
-.onf-label { display: block; font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.4px; color: #8a8a82; }
-.onf-value { display: block; font-size: 13px; color: #1a1a1a; margin-top: 2px; }
-.onf-payment { border-bottom: 1px solid #ddd; padding: 4px 0 8px; font-size: 12px; }
-.onf-payment .onf-label { margin-bottom: 4px; }
-.onf-payment-opts { display: flex; flex-wrap: wrap; gap: 4px 14px; }
-table.onf-table { width: 100%; border-collapse: collapse; margin-top: 4px; font-size: 11.5px; }
-table.onf-table th { text-align: left; font-size: 10px; text-transform: uppercase; color: #6b6b63; border-bottom: 2px solid #1a1a1a; padding: 5px 4px; }
-table.onf-table td { border-bottom: 1px solid #ddd; padding: 5px 4px; }
-table.onf-table td.onf-num { font-variant-numeric: tabular-nums; }
-table.onf-table tr.onf-row-child td { font-size: 10px; color: #6b6b63; padding-left: 14px; }
-table.onf-table tr.onf-row-child td.onf-desc { padding-left: 14px; }
-.onf-empty { text-align: center; color: #8a8a82; padding: 16px; }
-.onf-obs { min-height: 24px; border-bottom: 1px solid #ddd; padding: 4px 0 10px; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.onf-signatures { display: flex; gap: 24px; margin-top: 28px; }
-.onf-sig { flex: 1; }
-.onf-sig-line { border-top: 1px solid #999; margin-bottom: 4px; }
-.onf-sig-label { font-size: 11px; color: #6b6b63; }
+.send-preview-overlay__header {
+  flex: 0 0 auto;
+  display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3);
+  padding: max(16px, env(safe-area-inset-top)) var(--sp-4) var(--sp-3);
+  background: var(--s1);
+  border-bottom: 1px solid var(--b1);
+}
+.send-preview-overlay__title { font-size: 15px; font-weight: 600; color: var(--t1); }
+.send-preview-overlay__close {
+  appearance: none; border: none; background: var(--s3);
+  color: var(--t1); width: 32px; height: 32px; border-radius: var(--r-full);
+  font-size: 15px; flex: 0 0 auto; cursor: pointer;
+}
+.send-preview-overlay__close:active { background: var(--s4); }
+.send-preview-overlay__frame { flex: 1; width: 100%; border: none; background: #fff; }
+.send-preview-overlay__actions {
+  flex: 0 0 auto; display: flex; gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4) max(16px, env(safe-area-inset-bottom));
+  background: var(--s1); border-top: 1px solid var(--b1);
+}
+.send-preview-overlay__actions .order-action-btn { flex: 1; }
 
 /* ═══════════════════════════════════════════════════════════
    RECURSOS (price lists / supplier catalogs)

@@ -327,7 +327,6 @@ function computeDoorsBom(types) {
 
 function renderDoorsAll() {
   renderDoorsSummaryBar();
-  if (typeof updateOrderPreview === 'function') updateOrderPreview();
 }
 
 function renderDoorsSummaryBar() {

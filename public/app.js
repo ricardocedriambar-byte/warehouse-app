@@ -210,119 +210,6 @@ function fmtCurrency(n) {
 }
 
 // ═══════════════════════════════════════════════════════════
-// ORDER NOTE FICHA — HTML preview that mirrors the printed "Nota de
-// Encomenda" PDF (lib/pdf-order-note.js) field for field: same Cliente /
-// Condições Comerciais layout, same Artigos columns (including SKU and
-// per-line unit), same indent-and-fold-qty-into-text treatment for door
-// BOM component lines. Available for both Normal and Portas orders.
-// ═══════════════════════════════════════════════════════════
-function onfField(label, value) {
-  return `<div class="onf-field"><span class="onf-label">${dpEsc(label)}</span><span class="onf-value">${value ? dpEsc(String(value)) : '&nbsp;'}</span></div>`;
-}
-
-// The PDF template's Artigos table physically fits 11 rows and the
-// Observações line is a single fixed-width line — these constants must
-// stay in sync with lib/pdf-order-note.js's TABLE.maxRows and the 95-char
-// slice there, so the preview never promises more than the print actually
-// shows.
-const ORDER_NOTE_MAX_ROWS = 11;
-const ORDER_NOTE_OBS_MAX_CHARS = 95;
-
-function renderOrderNoteFicha(container, order) {
-  if (!container) return;
-  const client = orderState.clients.find(c => c.id === order.clientId) || {};
-  const date = order.createdAt ? new Date(order.createdAt) : new Date();
-  const dateStr = `${String(date.getDate()).padStart(2,'0')}/${String(date.getMonth()+1).padStart(2,'0')}/${date.getFullYear()}`;
-
-  const allLines = order.lines || [];
-  const visibleLines = allLines.slice(0, ORDER_NOTE_MAX_ROWS);
-
-  const rowsHtml = visibleLines.map(line => {
-    const isChildLine = /^\s/.test(line.descricao || '');
-    const isDoorLine = /^PORTA-/.test(line.sku || '');
-    const qtyCell = isChildLine ? '' : `${fmtNumber(line.qtyOrdered, (line.unidade==='un'||!line.unidade)?0:3)} ${line.unidade||'un'}`;
-    const skuCell = (!isDoorLine && line.sku) ? dpEsc(line.sku) : '';
-    const hasPrice = !!line.unitPrice;
-    const total = hasPrice ? line.qtyOrdered * line.unitPrice * (1 - (line.discountPct||0)/100) : null;
-    return `
-      <tr class="${isChildLine ? 'onf-row-child' : ''}">
-        <td class="onf-num">${qtyCell}</td>
-        <td></td>
-        <td>${skuCell}</td>
-        <td class="onf-desc">${dpEsc((line.descricao||'').trim())}</td>
-        <td class="onf-num">${line.comprimento ? fmtNumber(line.comprimento,0) : ''}</td>
-        <td class="onf-num">${line.largura ? fmtNumber(line.largura,0) : ''}</td>
-        <td class="onf-num">${line.espessura ? fmtNumber(line.espessura,0) : ''}</td>
-        <td class="onf-num">${hasPrice ? fmtNumber(line.unitPrice,2) : ''}</td>
-        <td class="onf-num">${hasPrice ? fmtNumber(line.discountPct||0,0) : ''}</td>
-        <td class="onf-num">${hasPrice ? fmtNumber(total,2) : ''}</td>
-      </tr>`;
-  }).join('') || `<tr><td colspan="10" class="onf-empty">Sem artigos.</td></tr>`;
-
-  const overflowNote = allLines.length > ORDER_NOTE_MAX_ROWS
-    ? `+ ${allLines.length - ORDER_NOTE_MAX_ROWS} artigo(s) adicionais — ver detalhe na app. `
-    : '';
-  const obsText = (overflowNote + (order.orderNotes || '')).trim().slice(0, ORDER_NOTE_OBS_MAX_CHARS);
-
-  container.innerHTML = `
-    <div class="order-note-ficha">
-      <div class="onf-header">
-        <img class="onf-logo" src="/icons/icon-512.png" alt="Cedriambar">
-        <div class="onf-company">
-          <div class="onf-company-name">Cedriâmbar, Lda.</div>
-          <div class="onf-company-line">Rua do Fial, Pascoal · 3515-848 Viseu</div>
-          <div class="onf-company-line">232 450 259 · cedriambar@gmail.com · NIPC 508938813</div>
-        </div>
-      </div>
-      <div class="onf-title-row">
-        <h2 class="onf-title">Nota de Encomenda</h2>
-        <div class="onf-meta">
-          <div>N.º ${dpEsc(order.orderId)}</div>
-          <div>Data ${dateStr}</div>
-        </div>
-      </div>
-      <div class="onf-columns">
-        <div class="onf-col">
-          <div class="onf-section-title">Cliente</div>
-          ${onfField('Cliente', order.clientName || client.name)}
-          ${onfField('N.º Cliente', client.id || order.clientId)}
-          ${onfField('NIF', client.nif)}
-          ${onfField('Morada', client.address)}
-          ${onfField('Telefone / Telemóvel', client.phone)}
-          ${onfField('Email', client.email)}
-          ${onfField('Vendedor', order.salesperson)}
-        </div>
-        <div class="onf-col">
-          <div class="onf-section-title">Condições Comerciais</div>
-          ${onfField('Valor Aproximado', '')}
-          ${onfField('Prazo de Entrega', '')}
-          ${onfField('Transporte / Local de Descarga', '')}
-          ${onfField('Plafond Cliente', '')}
-          ${onfField('Conta Corrente / Responsab. Total', '')}
-          <div class="onf-payment">
-            <span class="onf-label">Forma de Pagamento</span>
-            <div class="onf-payment-opts">
-              <span>☐ Transferência</span><span>☐ Multibanco / MBWay</span><span>☐ Numerário</span><span>☐ Cheque</span><span>☐ Letra</span>
-            </div>
-          </div>
-        </div>
-      </div>
-      <div class="onf-section-title">Artigos</div>
-      <table class="onf-table">
-        <thead><tr><th>Qtd.Ped.</th><th>Qtd.Forn.</th><th>SKU</th><th>Descrição</th><th>Comp.</th><th>Larg.</th><th>Esp.</th><th>Preço</th><th>Desc%</th><th>Total</th></tr></thead>
-        <tbody>${rowsHtml}</tbody>
-      </table>
-      <div class="onf-section-title">Observações</div>
-      <div class="onf-obs">${obsText ? dpEsc(obsText) : '&nbsp;'}</div>
-      <div class="onf-signatures">
-        <div class="onf-sig"><div class="onf-sig-line"></div><div class="onf-sig-label">O Cliente</div></div>
-        <div class="onf-sig"><div class="onf-sig-line"></div><div class="onf-sig-label">Pela Cedriâmbar, Lda.</div></div>
-      </div>
-    </div>
-  `;
-}
-
-// ═══════════════════════════════════════════════════════════
 // ITEMS API
 // ═══════════════════════════════════════════════════════════
 function setConnectionStatus(s, label) {
@@ -901,11 +788,6 @@ function renderOrderCreate() {
           placeholder="Notas opcionais…" style="resize:none"></textarea>
       </div>
 
-      <div class="order-create__section">
-        <div class="section-label">Pré-visualização</div>
-        <div id="order-preview-slot"></div>
-      </div>
-
       <div class="order-actions">
         <button class="order-action-btn order-action-btn--draft" id="save-draft-btn">Rascunho</button>
         <button class="order-action-btn order-action-btn--send" id="send-order-btn">Enviar para armazém</button>
@@ -916,8 +798,7 @@ function renderOrderCreate() {
   panel.querySelector('#add-item-btn').addEventListener('click', () => showItemSearchOverlay());
   panel.querySelector('#new-client-btn').addEventListener('click', () => showNewClientForm());
   panel.querySelector('#save-draft-btn').addEventListener('click', () => submitOrder('Rascunho'));
-  panel.querySelector('#send-order-btn').addEventListener('click', () => submitOrder('Enviado'));
-  panel.querySelector('#order-notes-input').addEventListener('input', updateOrderPreview);
+  panel.querySelector('#send-order-btn').addEventListener('click', () => confirmAndSendOrder());
 
   const typeToggle = panel.querySelector('#order-type-toggle');
   typeToggle.querySelectorAll('button').forEach(btn => {
@@ -932,48 +813,11 @@ function renderOrderCreate() {
       panel.querySelector('#order-lines-label').textContent = isPortas ? 'Outros materiais (placas, ferragens, etc.)' : 'Artigos';
       panel.querySelector('#order-doors-section').style.display = isPortas ? '' : 'none';
       if (isPortas) renderDoorsBuilder(panel.querySelector('#dp-embed-root'));
-      updateOrderPreview();
     });
   });
 
   wireClientSearch(panel);
   renderOrderLines();
-  updateOrderPreview();
-}
-
-// Builds a not-yet-saved order object from whatever's currently filled in
-// (client, normal items, door types if in Portas mode, notes) and renders
-// it through the same renderOrderNoteFicha() used for submitted orders —
-// so what the person sees while filling the form is exactly what the
-// printed Nota de Encomenda will look like, before they even submit it.
-function updateOrderPreview() {
-  const slot = document.getElementById('order-preview-slot');
-  if (!slot) return;
-
-  const client = orderState.newOrderClient;
-  const isPortas = orderState.newOrderType === 'Portas';
-  const normalLines = orderState.newOrderLines.map(line => ({ ...line, qtyOrdered: baseQty(line) }));
-  const doorLines = (isPortas && typeof computeDoorsBom === 'function')
-    ? computeDoorsBom(dpTypes).map((r, i) => ({
-        sku: `PORTA-${i + 1}`, descricao: r.descricao, qtyOrdered: r.qty,
-        unidade: 'un', unitPrice: 0, comprimento: r.indent ? '' : (r.altura || ''),
-        largura: r.indent ? '' : (r.largura || ''), espessura: r.indent ? '' : (r.espessura || ''),
-        discountPct: 0
-      }))
-    : [];
-
-  const previewOrder = {
-    orderId: '(a atribuir)',
-    createdAt: new Date().toISOString(),
-    salesperson: auth.user?.name || '',
-    clientId: client?.id || '',
-    clientName: client?.name || '',
-    orderNotes: document.getElementById('order-notes-input')?.value || '',
-    orderType: orderState.newOrderType,
-    lines: [...doorLines, ...normalLines]
-  };
-
-  renderOrderNoteFicha(slot, previewOrder);
 }
 
 function wireClientSearch(root) {
@@ -996,9 +840,7 @@ function wireClientSearch(root) {
       selected.style.display    = 'none';
       results.style.display     = 'none';
       input.focus();
-      updateOrderPreview();
     });
-    updateOrderPreview();
   }
 
   function renderResults(q) {
@@ -1053,7 +895,6 @@ function baseQty(line) {
 function renderOrderLines() {
   const list = $('#order-lines-list');
   if (!list) return;
-  if (typeof updateOrderPreview === 'function') updateOrderPreview();
   if (orderState.newOrderLines.length === 0) { list.innerHTML = ''; return; }
 
   list.innerHTML = orderState.newOrderLines.map((line, idx) => {
@@ -1396,34 +1237,44 @@ function showNewClientForm() {
 // ═══════════════════════════════════════════════════════════
 // SUBMIT ORDER
 // ═══════════════════════════════════════════════════════════
-async function submitOrder(targetStatus) {
+// Validates the form and builds the exact payload /api/orders expects.
+// Returns null (after showing a toast) if something required is missing.
+// Shared by the plain draft-save path and the confirm-with-preview path.
+function buildOrderSubmissionPayload(targetStatus) {
   const client     = orderState.newOrderClient;
   const orderNotes = $('#order-notes-input')?.value.trim() || '';
   const salesperson = auth.user?.name || '';
   const isPortas = orderState.newOrderType === 'Portas';
 
-  if (!client) { toast('Selecione um cliente', 'error'); return; }
+  if (!client) { toast('Selecione um cliente', 'error'); return null; }
 
-  let payload;
   if (isPortas) {
-    if (!doorsHasContent()) { toast('Adicione pelo menos um tipo de porta', 'error'); return; }
+    if (!doorsHasContent()) { toast('Adicione pelo menos um tipo de porta', 'error'); return null; }
     const { lines: doorLines, doorsData } = getDoorsOrderPayload();
-    if (doorLines.length === 0) { toast('Preencha as medidas para gerar os materiais', 'error'); return; }
+    if (doorLines.length === 0) { toast('Preencha as medidas para gerar os materiais', 'error'); return null; }
     const extraLines = orderState.newOrderLines.map(line => ({ ...line, qtyOrdered: baseQty(line) }));
-    payload = {
+    return {
       clientId: client.id, clientName: client.name, salesperson, orderNotes,
       status: targetStatus, orderType: 'Portas', doorsData,
       lines: [...doorLines, ...extraLines]
     };
-  } else {
-    if (orderState.newOrderLines.length === 0) { toast('Adicione pelo menos um artigo', 'error'); return; }
-    payload = {
-      clientId: client.id, clientName: client.name, salesperson, orderNotes,
-      status: targetStatus, orderType: 'Normal',
-      lines: orderState.newOrderLines.map(line => ({ ...line, qtyOrdered: baseQty(line) }))
-    };
   }
+  if (orderState.newOrderLines.length === 0) { toast('Adicione pelo menos um artigo', 'error'); return null; }
+  return {
+    clientId: client.id, clientName: client.name, salesperson, orderNotes,
+    status: targetStatus, orderType: 'Normal',
+    lines: orderState.newOrderLines.map(line => ({ ...line, qtyOrdered: baseQty(line) }))
+  };
+}
 
+async function submitOrder(targetStatus) {
+  const payload = buildOrderSubmissionPayload(targetStatus);
+  if (!payload) return;
+  await sendOrderPayload(payload);
+}
+
+async function sendOrderPayload(payload) {
+  const client = orderState.newOrderClient;
   const sendBtn  = $('#send-order-btn');
   const draftBtn = $('#save-draft-btn');
   if (sendBtn)  sendBtn.disabled  = true;
@@ -1434,19 +1285,84 @@ async function submitOrder(targetStatus) {
     await loadOrders({ silent: true });
     renderOrdersList();
     setView('orders');
-    toast(targetStatus === 'Enviado' ? 'Encomenda enviada para armazém' : 'Rascunho guardado', 'success');
+    toast(payload.status === 'Enviado' ? 'Encomenda enviada para armazém' : 'Rascunho guardado', 'success');
 
     // Notify by email the moment it's sent (backorder). Not sent for
     // drafts — only once it actually leaves as an order. This never blocks
     // or fails the order submission itself, which has already succeeded.
-    if (targetStatus === 'Enviado') {
-      notifyOrderByEmail({ ...data.order, salesperson, orderNotes }, client);
+    if (payload.status === 'Enviado') {
+      notifyOrderByEmail({ ...data.order, salesperson: payload.salesperson, orderNotes: payload.orderNotes }, client);
     }
   } catch (err) {
     showError(err, 'Não foi possível guardar a encomenda. Verifique a ligação e tente novamente.');
     if (sendBtn)  sendBtn.disabled  = false;
     if (draftBtn) draftBtn.disabled = false;
   }
+}
+
+// "Enviar para armazém" no longer submits straight away — it first asks
+// the server to render the actual Nota de Encomenda PDF (the exact file
+// that will be attached to the warehouse email) from the not-yet-saved
+// data, and shows that real PDF for a final look before anything is
+// written to the sheet.
+async function confirmAndSendOrder() {
+  const payload = buildOrderSubmissionPayload('Enviado');
+  if (!payload) return;
+
+  const client = orderState.newOrderClient;
+  const sendBtn = $('#send-order-btn');
+  if (sendBtn) { sendBtn.disabled = true; sendBtn.textContent = 'A preparar pré-visualização…'; }
+
+  try {
+    const previewOrder = {
+      orderId: '(por atribuir)',
+      createdAt: new Date().toISOString(),
+      salesperson: payload.salesperson,
+      orderNotes: payload.orderNotes,
+      orderType: payload.orderType,
+      lines: payload.lines
+    };
+    const res = await fetch('/api/order-preview-pdf', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ order: previewOrder, client })
+    });
+    if (!res.ok) throw new Error('preview failed');
+    const blob = await res.blob();
+    showSendPreviewOverlay(URL.createObjectURL(blob), () => sendOrderPayload(payload));
+  } catch (err) {
+    showError(err, 'Não foi possível gerar a pré-visualização da encomenda.');
+  } finally {
+    if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = 'Enviar para armazém'; }
+  }
+}
+
+function showSendPreviewOverlay(pdfUrl, onConfirm) {
+  const app = $('#app');
+  const overlay = document.createElement('div');
+  overlay.className = 'send-preview-overlay';
+  overlay.innerHTML = `
+    <div class="send-preview-overlay__header">
+      <span class="send-preview-overlay__title">Confirmar encomenda</span>
+      <button class="send-preview-overlay__close" id="send-preview-close" aria-label="Fechar">✕</button>
+    </div>
+    <iframe class="send-preview-overlay__frame" src="${pdfUrl}" title="Nota de Encomenda"></iframe>
+    <div class="send-preview-overlay__actions">
+      <button class="order-action-btn order-action-btn--draft" id="send-preview-back">Voltar a editar</button>
+      <button class="order-action-btn order-action-btn--send" id="send-preview-confirm">Confirmar e enviar</button>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  const cleanup = () => { URL.revokeObjectURL(pdfUrl); overlay.remove(); };
+  overlay.querySelector('#send-preview-close').addEventListener('click', cleanup);
+  overlay.querySelector('#send-preview-back').addEventListener('click', cleanup);
+  overlay.querySelector('#send-preview-confirm').addEventListener('click', async () => {
+    const confirmBtn = overlay.querySelector('#send-preview-confirm');
+    confirmBtn.disabled = true;
+    confirmBtn.textContent = 'A enviar…';
+    await onConfirm();
+    cleanup();
+  });
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1567,18 +1483,27 @@ function renderOrderPick(order, isDraft) {
   const draftSendBtn = panel.querySelector('#draft-send-btn');
   if (draftSendBtn) {
     draftSendBtn.addEventListener('click', async () => {
-      draftSendBtn.textContent = 'A enviar…'; draftSendBtn.disabled = true;
+      draftSendBtn.textContent = 'A preparar pré-visualização…'; draftSendBtn.disabled = true;
+      const fullClient = orderState.clients.find(c => c.id === order.clientId);
       try {
-        await apiPatch('/api/orders', { orderId: order.orderId, status: 'Enviado' });
-        await loadOrders({ silent: true });
-        const updated = orderState.orders.find(o => o.orderId === order.orderId);
-        if (updated) renderOrderPick(updated, false);
-        toast('Encomenda enviada para armazém', 'success');
-        const fullOrder  = updated || order;
-        const fullClient = orderState.clients.find(c => c.id === fullOrder.clientId);
-        notifyOrderByEmail(fullOrder, fullClient);
+        const res = await fetch('/api/order-preview-pdf', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ order, client: fullClient })
+        });
+        if (!res.ok) throw new Error('preview failed');
+        const blob = await res.blob();
+        showSendPreviewOverlay(URL.createObjectURL(blob), async () => {
+          await apiPatch('/api/orders', { orderId: order.orderId, status: 'Enviado' });
+          await loadOrders({ silent: true });
+          const updated = orderState.orders.find(o => o.orderId === order.orderId);
+          if (updated) renderOrderPick(updated, false);
+          toast('Encomenda enviada para armazém', 'success');
+          notifyOrderByEmail(updated || order, fullClient);
+        });
       } catch (err) {
-        showError(err, 'Não foi possível enviar a encomenda. Tente novamente.');
+        showError(err, 'Não foi possível gerar a pré-visualização da encomenda.');
+      } finally {
         draftSendBtn.textContent = 'Enviar para armazém'; draftSendBtn.disabled = false;
       }
     });
