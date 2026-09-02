@@ -220,13 +220,24 @@ function onfField(label, value) {
   return `<div class="onf-field"><span class="onf-label">${dpEsc(label)}</span><span class="onf-value">${value ? dpEsc(String(value)) : '&nbsp;'}</span></div>`;
 }
 
+// The PDF template's Artigos table physically fits 11 rows and the
+// Observações line is a single fixed-width line — these constants must
+// stay in sync with lib/pdf-order-note.js's TABLE.maxRows and the 95-char
+// slice there, so the preview never promises more than the print actually
+// shows.
+const ORDER_NOTE_MAX_ROWS = 11;
+const ORDER_NOTE_OBS_MAX_CHARS = 95;
+
 function renderOrderNoteFicha(container, order) {
   if (!container) return;
   const client = orderState.clients.find(c => c.id === order.clientId) || {};
   const date = order.createdAt ? new Date(order.createdAt) : new Date();
   const dateStr = `${String(date.getDate()).padStart(2,'0')}/${String(date.getMonth()+1).padStart(2,'0')}/${date.getFullYear()}`;
 
-  const rowsHtml = (order.lines || []).map(line => {
+  const allLines = order.lines || [];
+  const visibleLines = allLines.slice(0, ORDER_NOTE_MAX_ROWS);
+
+  const rowsHtml = visibleLines.map(line => {
     const isChildLine = /^\s/.test(line.descricao || '');
     const isDoorLine = /^PORTA-/.test(line.sku || '');
     const qtyCell = isChildLine ? '' : `${fmtNumber(line.qtyOrdered, (line.unidade==='un'||!line.unidade)?0:3)} ${line.unidade||'un'}`;
@@ -247,6 +258,11 @@ function renderOrderNoteFicha(container, order) {
         <td class="onf-num">${hasPrice ? fmtNumber(total,2) : ''}</td>
       </tr>`;
   }).join('') || `<tr><td colspan="10" class="onf-empty">Sem artigos.</td></tr>`;
+
+  const overflowNote = allLines.length > ORDER_NOTE_MAX_ROWS
+    ? `+ ${allLines.length - ORDER_NOTE_MAX_ROWS} artigo(s) adicionais — ver detalhe na app. `
+    : '';
+  const obsText = (overflowNote + (order.orderNotes || '')).trim().slice(0, ORDER_NOTE_OBS_MAX_CHARS);
 
   container.innerHTML = `
     <div class="order-note-ficha">
@@ -297,7 +313,7 @@ function renderOrderNoteFicha(container, order) {
         <tbody>${rowsHtml}</tbody>
       </table>
       <div class="onf-section-title">Observações</div>
-      <div class="onf-obs">${order.orderNotes ? dpEsc(order.orderNotes) : '&nbsp;'}</div>
+      <div class="onf-obs">${obsText ? dpEsc(obsText) : '&nbsp;'}</div>
       <div class="onf-signatures">
         <div class="onf-sig"><div class="onf-sig-line"></div><div class="onf-sig-label">O Cliente</div></div>
         <div class="onf-sig"><div class="onf-sig-line"></div><div class="onf-sig-label">Pela Cedriâmbar, Lda.</div></div>
@@ -1466,18 +1482,12 @@ function renderOrderPick(order, isDraft) {
         <div class="order-pick__id">${order.orderId}${order.orderType === 'Portas' ? ' <span class="order-card__type-badge">Portas</span>' : ''} · <span style="color:var(--t3)">${order.status}</span></div>
         <div class="order-pick__client">${order.clientName}</div>
         ${order.orderNotes ? `<div style="font-size:13px;color:var(--t3);margin-top:4px">${order.orderNotes}</div>` : ''}
-        <div style="display:flex;gap:8px;margin-top:8px">
-          <button class="btn-ghost" id="view-ficha-btn">Ver ficha</button>
-          <button class="btn-ghost" id="print-ficha-btn" style="display:none">Imprimir</button>
-        </div>
         <div class="order-pick__progress-row">
           <span class="order-pick__progress-label">${pickedCount} de ${order.lines.length} separados</span>
           ${!isDraft && order.status === 'Enviado'
             ? `<button class="orders-filter-btn active" id="start-picking-btn">Iniciar separação</button>` : ''}
         </div>
       </div>
-
-      <div class="doors-viewer-slot" id="ficha-viewer-slot" style="display:none"></div>
 
       ${isDraft ? `
         <div style="display:flex;gap:8px;margin-bottom:16px">
@@ -1552,28 +1562,6 @@ function renderOrderPick(order, isDraft) {
   panel.querySelector('#pick-back-btn').addEventListener('click', () => {
     setView('orders'); renderOrdersList();
   });
-
-  // Ver ficha: shows the read-only ficha mirroring the printed Nota de
-  // Encomenda PDF — available for every order, Normal or Portas.
-  const fichaBtn = panel.querySelector('#view-ficha-btn');
-  const printFichaBtn = panel.querySelector('#print-ficha-btn');
-  if (fichaBtn) {
-    const slot = panel.querySelector('#ficha-viewer-slot');
-    fichaBtn.addEventListener('click', () => {
-      const showing = slot.style.display !== 'none';
-      if (showing) {
-        slot.style.display = 'none';
-        fichaBtn.textContent = 'Ver ficha';
-        if (printFichaBtn) printFichaBtn.style.display = 'none';
-      } else {
-        renderOrderNoteFicha(slot, order);
-        slot.style.display = '';
-        fichaBtn.textContent = 'Esconder ficha';
-        if (printFichaBtn) printFichaBtn.style.display = '';
-      }
-    });
-    printFichaBtn?.addEventListener('click', () => window.print());
-  }
 
   // Draft: send to warehouse
   const draftSendBtn = panel.querySelector('#draft-send-btn');
