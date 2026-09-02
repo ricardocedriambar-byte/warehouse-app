@@ -769,7 +769,7 @@ function renderOrderCreate() {
       </div>
 
       <div class="order-create__section" id="order-lines-section">
-        <div class="section-label">Artigos</div>
+        <div class="section-label" id="order-lines-label">Artigos</div>
         <div class="order-lines" id="order-lines-list"></div>
         <button class="add-item-btn" id="add-item-btn">
           <svg viewBox="0 0 24 24" width="16" height="16"><path d="M12 5v14m-7-7h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>
@@ -778,6 +778,7 @@ function renderOrderCreate() {
       </div>
 
       <div class="order-create__section" id="order-doors-section" style="display:none">
+        <div class="section-label">Portas</div>
         <div id="dp-embed-root"></div>
       </div>
 
@@ -807,7 +808,9 @@ function renderOrderCreate() {
       btn.classList.add('active');
 
       const isPortas = orderState.newOrderType === 'Portas';
-      panel.querySelector('#order-lines-section').style.display = isPortas ? 'none' : '';
+      // Both sections stay visible in Portas mode — a door order can also
+      // need panels, hardware, etc. from the normal catalog.
+      panel.querySelector('#order-lines-label').textContent = isPortas ? 'Outros materiais (placas, ferragens, etc.)' : 'Artigos';
       panel.querySelector('#order-doors-section').style.display = isPortas ? '' : 'none';
       if (isPortas) renderDoorsBuilder(panel.querySelector('#dp-embed-root'));
     });
@@ -1245,11 +1248,13 @@ async function submitOrder(targetStatus) {
   let payload;
   if (isPortas) {
     if (!doorsHasContent()) { toast('Adicione pelo menos um tipo de porta', 'error'); return; }
-    const { lines, doorsData } = getDoorsOrderPayload();
-    if (lines.length === 0) { toast('Preencha as medidas para gerar os materiais', 'error'); return; }
+    const { lines: doorLines, doorsData } = getDoorsOrderPayload();
+    if (doorLines.length === 0) { toast('Preencha as medidas para gerar os materiais', 'error'); return; }
+    const extraLines = orderState.newOrderLines.map(line => ({ ...line, qtyOrdered: baseQty(line) }));
     payload = {
       clientId: client.id, clientName: client.name, salesperson, orderNotes,
-      status: targetStatus, orderType: 'Portas', doorsData, lines
+      status: targetStatus, orderType: 'Portas', doorsData,
+      lines: [...doorLines, ...extraLines]
     };
   } else {
     if (orderState.newOrderLines.length === 0) { toast('Adicione pelo menos um artigo', 'error'); return; }
@@ -1356,14 +1361,20 @@ function renderOrderPick(order, isDraft) {
           const defaultQty = perUnitArea > 0
             ? fmtNumber(remainingNative / perUnitArea, 3)
             : fmtNumber(remainingNative, 3);
+          // Portas orders can mix synthetic door-BOM lines (no SKU, no
+          // price — they're never stock-tracked) with real catalog items
+          // (placas, ferragens, etc.) added alongside them, so this is
+          // decided per line, not per order.
+          const isDoorLine = /^PORTA-/.test(line.sku);
+          const isIndented = /^\s/.test(line.descricao || '');
           return `
             <div class="pick-line" data-sku="${line.sku}" data-done="${done}" data-per-unit-area="${perUnitArea}">
               <div class="pick-line__top">
-                ${order.orderType === 'Portas' ? '' : `<span class="pick-line__sku">${line.sku}</span>`}
+                ${isDoorLine ? '' : `<span class="pick-line__sku">${line.sku}</span>`}
                 <span class="pick-line__qty-badge" data-done="${done}">${line.qtyPicked}/${line.qtyOrdered} ${line.unidade||'un'}${unitsEquiv}</span>
               </div>
-              <div class="pick-line__desc">${line.descricao}</div>
-              ${order.orderType === 'Portas' ? '' : `<div class="pick-line__dims">${fmtNumber(line.comprimento,0)}×${fmtNumber(line.largura,0)}×${fmtNumber(line.espessura,0)}mm · ${fmtCurrency(line.unitPrice)}/${line.unidade||'un'}</div>`}
+              <div class="pick-line__desc"${isIndented ? ' style="padding-left:16px;color:var(--t2);font-size:13px"' : ''}>${line.descricao.trim()}</div>
+              ${isIndented ? '' : `<div class="pick-line__dims">${fmtNumber(line.comprimento,0)}×${fmtNumber(line.largura,0)}×${fmtNumber(line.espessura,0)}mm${line.unitPrice ? ` · ${fmtCurrency(line.unitPrice)}/${line.unidade||'un'}` : ''}</div>`}
               ${order.status === 'Em separação' ? `
                 <div class="pick-line__actions">
                   <div class="pick-line__qty-group">

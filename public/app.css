@@ -1244,11 +1244,15 @@ select.order-field { padding: 12px var(--sp-4); }
   content: ''; flex: 1; height: 1px; background: var(--doc-line);
 }
 table.doors-doc__bom, table.doors-doc__table { width: 100%; border-collapse: collapse; margin-bottom: 4px; }
-table.doors-doc__bom td { padding: 7px 8px; border-bottom: 1px solid var(--doc-line); font-size: 13.5px; }
-table.doors-doc__bom tr:nth-child(odd) td { background: #faf6ec; }
+table.doors-doc__bom td { padding: 6px 8px; border-bottom: 1px solid var(--doc-line); font-size: 13.5px; }
+table.doors-doc__bom tr.doors-doc__bom-parent td {
+  background: #faf6ec; font-weight: 700; border-top: 1px solid var(--doc-line);
+}
+table.doors-doc__bom tr.doors-doc__bom-child td { font-size: 11px; color: var(--doc-ink-soft, #6b6558); padding-top: 4px; padding-bottom: 4px; }
 table.doors-doc__bom td.doors-doc__qty {
   font-weight: 700; color: var(--doc-wood-dark); width: 48px; font-variant-numeric: tabular-nums;
 }
+table.doors-doc__bom tr.doors-doc__bom-child td.doors-doc__qty { font-weight: 500; }
 table.doors-doc__table th {
   text-align: left; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.3px;
   color: #fff; background: var(--doc-wood-dark); padding: 8px 6px;

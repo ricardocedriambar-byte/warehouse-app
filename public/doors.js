@@ -267,6 +267,20 @@ function dpFmtNum(n) {
   return (Math.round(n*100)/100).toString().replace('.', ',');
 }
 
+// Renders BOM rows as table rows, converting the leading spaces baked
+// into indented (child) descriptions to &nbsp; for HTML — the underlying
+// data keeps plain spaces (which the PDF export needs as literal
+// whitespace), only the on-screen preview needs this conversion.
+function dpBomRowsHtml(bomRows) {
+  return bomRows.map(r => {
+    const leadingSpaces = r.descricao.match(/^ */)[0].length;
+    const escaped = dpEsc(r.descricao.trim());
+    const indented = '&nbsp;'.repeat(leadingSpaces) + escaped;
+    const qtyCell = r.indent ? '' : dpFmtNum(r.qty);
+    return `<tr class="${r.indent ? 'doors-doc__bom-child' : 'doors-doc__bom-parent'}"><td class="doors-doc__qty">${qtyCell}</td><td>${indented}</td></tr>`;
+  }).join('');
+}
+
 function dpCalcType(t) {
   const aduelaPecasUnit = t.tipo === 'dupla' ? 3 : 2.5;
   const guarnLargoUnit = 4; // laterais — sempre 4, independente do tipo
@@ -281,74 +295,63 @@ function dpCalcType(t) {
   };
 }
 
-// Pure BOM computation — no DOM reads, so it's reusable both for the live
-// preview and for building the order's actual line items on submit.
-// Material now lives per door type, so every group key includes it —
-// otherwise two types in different materials but the same dimensions
-// would wrongly merge into one BOM line.
-// Returns [{ qty, descricao }, ...].
+const ABERTURA_ABBREV = { Esquerda: 'ESQ', Direita: 'DIR', Dupla: 'DUPLA', Correr: 'CORR' };
+
+// Per-type BOM — one "BLOCO" (or "PASSAGEM") parent line per door type,
+// naming the finished piece the way it's called on the shop floor, with
+// its own aduela/guarnição/bite components listed indented right beneath
+// it. Unlike the old cross-type aggregation, materials are NOT merged
+// across different door types anymore — each type's parts sit under its
+// own heading, since that's how they get cut and assembled together.
+// Child rows get a 4-space indent prefix baked into descricao — this
+// carries through unchanged into the printed PDF (plain spaces) and is
+// converted to non-breaking spaces only for the HTML preview.
+// Returns [{ qty, descricao, indent }, ...].
 function computeDoorsBom(types) {
-  const portaGroups = {};
-  const aduelaGroups = {};
-  const aduelaPassagemGroups = {};
-  const guarnGroups = {};
-  const biteGroups = {};
+  const rows = [];
+  const INDENT = '        '; // 8 spaces — deeper than before, for clearer visual nesting
 
   types.forEach(t => {
     const c = dpCalcType(t);
-    const mat = t.material || '';
+    const mat = (t.material || '').toUpperCase();
+    const vidroLabel = t.vidro ? 'VIDRO' : 'TAPADO';
+    const aberturaLabel = ABERTURA_ABBREV[t.abertura] || '';
+    const parentPrefix = t.tipo === 'passagem' ? 'PASSAGEM' : 'BLOCO';
+    const parentParts = [parentPrefix, vidroLabel, mat, aberturaLabel].filter(Boolean);
+    // Dimensions are NOT baked into the text — they go into their own
+    // comprimento/largura/espessura fields (mapped altura→comprimento),
+    // same as any normal catalog item, so they land in the Nota de
+    // Encomenda's own Comp./Larg./Esp. columns instead of being read
+    // out of a sentence.
+    rows.push({
+      qty: c.leafCount, descricao: parentParts.join(' '), indent: false,
+      altura: t.altura || '', largura: t.largura || '', espessura: t.espessura || ''
+    });
 
-    if (t.tipo !== 'passagem') {
-      const key = `${t.altura || '?'}x${t.largura || '?'}|${t.tipo}|${mat}`;
-      portaGroups[key] = (portaGroups[key] || 0) + c.leafCount;
-    }
+    // Component (child) rows: the piece count is folded into the text
+    // itself ("— 6 pç") rather than shown in the Qtd. Ped. column, which
+    // is reserved for the parent's own order quantity.
+    const childRow = (qty, text) => rows.push({ qty, descricao: `${INDENT}${text} — ${dpFmtNum(qty)} pç`, indent: true });
 
-    const esKey = `${t.espessura || '?'}|${mat}`;
+    const aduelaQty = Math.round(c.aduelaPecas * 100) / 100;
     if (t.tipo === 'passagem') {
-      aduelaPassagemGroups[esKey] = (aduelaPassagemGroups[esKey] || 0) + c.aduelaPecas;
+      childRow(aduelaQty, `Aduela de passagem${mat ? ' ' + mat : ''} ${t.espessura || '?'}MM`);
     } else {
-      aduelaGroups[esKey] = (aduelaGroups[esKey] || 0) + c.aduelaPecas;
+      childRow(aduelaQty, `Aduela${mat ? ' ' + mat : ''} ${t.espessura || '?'}MM C/ REBAIXO`);
     }
-
     if (c.guarnLargo > 0) {
-      const mm = `${t.gLargo || '15'}|${mat}`;
-      guarnGroups[mm] = (guarnGroups[mm] || 0) + c.guarnLargo;
+      childRow(Math.round(c.guarnLargo * 100) / 100, `Guarnição${mat ? ' ' + mat : ''} 2200X70X${t.gLargo || '15'}MM`);
     }
     if (c.guarnFino > 0) {
-      const mm = `${t.gFino || '10'}|${mat}`;
-      guarnGroups[mm] = (guarnGroups[mm] || 0) + c.guarnFino;
+      childRow(Math.round(c.guarnFino * 100) / 100, `Guarnição${mat ? ' ' + mat : ''} 2200X70X${t.gFino || '10'}MM`);
     }
     if (c.biteQty > 0) {
-      const key = `${t.biteStock}|${mat}`;
-      biteGroups[key] = (biteGroups[key] || 0) + c.biteQty;
+      const stockLabel = t.biteStock === '1830' ? '1830X22X19MM' : '2750X19X22MM';
+      childRow(Math.round(c.biteQty * 100) / 100, `Bite MDF ${stockLabel}`);
     }
   });
 
-  const rows = [];
-  Object.keys(portaGroups).forEach(key => {
-    const [dim, , mat] = key.split('|');
-    const [alt, larg] = dim.split('x');
-    rows.push({ qty: portaGroups[key], descricao: `PORTA${mat ? ' ' + mat.toUpperCase() : ''} ${alt}X${larg}MM` });
-  });
-  Object.keys(aduelaGroups).sort().forEach(key => {
-    const [es, mat] = key.split('|');
-    rows.push({ qty: aduelaGroups[key], descricao: `ADUELA${mat ? ' ' + mat.toUpperCase() : ''} ${es}MM C/ REBAIXO (peças)` });
-  });
-  Object.keys(aduelaPassagemGroups).sort().forEach(key => {
-    const [es, mat] = key.split('|');
-    rows.push({ qty: aduelaPassagemGroups[key], descricao: `ADUELA DE PASSAGEM${mat ? ' ' + mat.toUpperCase() : ''} ${es}MM (peças)` });
-  });
-  Object.keys(guarnGroups).sort().forEach(key => {
-    const [mm, mat] = key.split('|');
-    rows.push({ qty: guarnGroups[key], descricao: `GUARNIÇÃO${mat ? ' ' + mat.toUpperCase() : ''} 2200X70X${mm}MM` });
-  });
-  Object.keys(biteGroups).forEach(key => {
-    const [stock, mat] = key.split('|');
-    const stockLabel = stock === '1830' ? '1830X22X19MM' : '2750X19X22MM';
-    rows.push({ qty: biteGroups[key], descricao: `BITE MDF${mat ? ' ' + mat.toUpperCase() : ''} ${stockLabel}` });
-  });
-
-  return rows.map(r => ({ ...r, qty: Math.round(r.qty * 100) / 100 }));
+  return rows;
 }
 
 function renderDoorsAll() {
@@ -413,7 +416,7 @@ function renderDoorsDocument() {
   }).join('');
 
   const bomRows = computeDoorsBom(dpTypes);
-  bomBody.innerHTML = bomRows.map(r => `<tr><td class="doors-doc__qty">${dpFmtNum(r.qty)}</td><td>${r.descricao}</td></tr>`).join('');
+  bomBody.innerHTML = dpBomRowsHtml(bomRows);
 }
 
 // Packages the current builder state into what createOrder() needs:
@@ -431,7 +434,9 @@ function getDoorsOrderPayload() {
     qtyOrdered: r.qty,
     unidade: 'un',
     unitPrice: 0,
-    comprimento: '', largura: '', espessura: '',
+    comprimento: r.indent ? '' : (r.altura || ''),
+    largura: r.indent ? '' : (r.largura || ''),
+    espessura: r.indent ? '' : (r.espessura || ''),
     discountPct: 0
   }));
 
@@ -456,9 +461,9 @@ function renderSavedDoorsDocument(container, order) {
   const d = order.doorsData;
   if (!container || !d) return;
 
-  const bomRowsHtml = (d.bomRows || [])
-    .map(r => `<tr><td class="doors-doc__qty">${dpFmtNum(r.qty)}</td><td>${r.descricao}</td></tr>`)
-    .join('') || `<tr><td class="doors-empty">Sem dados.</td></tr>`;
+  const bomRowsHtml = (d.bomRows && d.bomRows.length)
+    ? dpBomRowsHtml(d.bomRows)
+    : `<tr><td class="doors-empty">Sem dados.</td></tr>`;
 
   const typesHtml = (d.types || []).map(t => {
     const tipoLabel = t.tipo === 'dupla' ? 'Dupla' : (t.tipo === 'passagem' ? 'Passagem' : 'Simples');
