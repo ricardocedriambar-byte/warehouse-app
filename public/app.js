@@ -210,6 +210,103 @@ function fmtCurrency(n) {
 }
 
 // ═══════════════════════════════════════════════════════════
+// ORDER NOTE FICHA — HTML preview that mirrors the printed "Nota de
+// Encomenda" PDF (lib/pdf-order-note.js) field for field: same Cliente /
+// Condições Comerciais layout, same Artigos columns (including SKU and
+// per-line unit), same indent-and-fold-qty-into-text treatment for door
+// BOM component lines. Available for both Normal and Portas orders.
+// ═══════════════════════════════════════════════════════════
+function onfField(label, value) {
+  return `<div class="onf-field"><span class="onf-label">${dpEsc(label)}</span><span class="onf-value">${value ? dpEsc(String(value)) : '&nbsp;'}</span></div>`;
+}
+
+function renderOrderNoteFicha(container, order) {
+  if (!container) return;
+  const client = orderState.clients.find(c => c.id === order.clientId) || {};
+  const date = order.createdAt ? new Date(order.createdAt) : new Date();
+  const dateStr = `${String(date.getDate()).padStart(2,'0')}/${String(date.getMonth()+1).padStart(2,'0')}/${date.getFullYear()}`;
+
+  const rowsHtml = (order.lines || []).map(line => {
+    const isChildLine = /^\s/.test(line.descricao || '');
+    const isDoorLine = /^PORTA-/.test(line.sku || '');
+    const qtyCell = isChildLine ? '' : `${fmtNumber(line.qtyOrdered, (line.unidade==='un'||!line.unidade)?0:3)} ${line.unidade||'un'}`;
+    const skuCell = (!isDoorLine && line.sku) ? dpEsc(line.sku) : '';
+    const hasPrice = !!line.unitPrice;
+    const total = hasPrice ? line.qtyOrdered * line.unitPrice * (1 - (line.discountPct||0)/100) : null;
+    return `
+      <tr class="${isChildLine ? 'onf-row-child' : ''}">
+        <td class="onf-num">${qtyCell}</td>
+        <td></td>
+        <td>${skuCell}</td>
+        <td class="onf-desc">${dpEsc((line.descricao||'').trim())}</td>
+        <td class="onf-num">${line.comprimento ? fmtNumber(line.comprimento,0) : ''}</td>
+        <td class="onf-num">${line.largura ? fmtNumber(line.largura,0) : ''}</td>
+        <td class="onf-num">${line.espessura ? fmtNumber(line.espessura,0) : ''}</td>
+        <td class="onf-num">${hasPrice ? fmtNumber(line.unitPrice,2) : ''}</td>
+        <td class="onf-num">${hasPrice ? fmtNumber(line.discountPct||0,0) : ''}</td>
+        <td class="onf-num">${hasPrice ? fmtNumber(total,2) : ''}</td>
+      </tr>`;
+  }).join('') || `<tr><td colspan="10" class="onf-empty">Sem artigos.</td></tr>`;
+
+  container.innerHTML = `
+    <div class="order-note-ficha">
+      <div class="onf-header">
+        <img class="onf-logo" src="/icons/icon-512.png" alt="Cedriambar">
+        <div class="onf-company">
+          <div class="onf-company-name">Cedriâmbar, Lda.</div>
+          <div class="onf-company-line">Rua do Fial, Pascoal · 3515-848 Viseu</div>
+          <div class="onf-company-line">232 450 259 · cedriambar@gmail.com · NIPC 508938813</div>
+        </div>
+      </div>
+      <div class="onf-title-row">
+        <h2 class="onf-title">Nota de Encomenda</h2>
+        <div class="onf-meta">
+          <div>N.º ${dpEsc(order.orderId)}</div>
+          <div>Data ${dateStr}</div>
+        </div>
+      </div>
+      <div class="onf-columns">
+        <div class="onf-col">
+          <div class="onf-section-title">Cliente</div>
+          ${onfField('Cliente', order.clientName || client.name)}
+          ${onfField('N.º Cliente', client.id || order.clientId)}
+          ${onfField('NIF', client.nif)}
+          ${onfField('Morada', client.address)}
+          ${onfField('Telefone / Telemóvel', client.phone)}
+          ${onfField('Email', client.email)}
+          ${onfField('Vendedor', order.salesperson)}
+        </div>
+        <div class="onf-col">
+          <div class="onf-section-title">Condições Comerciais</div>
+          ${onfField('Valor Aproximado', '')}
+          ${onfField('Prazo de Entrega', '')}
+          ${onfField('Transporte / Local de Descarga', '')}
+          ${onfField('Plafond Cliente', '')}
+          ${onfField('Conta Corrente / Responsab. Total', '')}
+          <div class="onf-payment">
+            <span class="onf-label">Forma de Pagamento</span>
+            <div class="onf-payment-opts">
+              <span>☐ Transferência</span><span>☐ Multibanco / MBWay</span><span>☐ Numerário</span><span>☐ Cheque</span><span>☐ Letra</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="onf-section-title">Artigos</div>
+      <table class="onf-table">
+        <thead><tr><th>Qtd.Ped.</th><th>Qtd.Forn.</th><th>SKU</th><th>Descrição</th><th>Comp.</th><th>Larg.</th><th>Esp.</th><th>Preço</th><th>Desc%</th><th>Total</th></tr></thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>
+      <div class="onf-section-title">Observações</div>
+      <div class="onf-obs">${order.orderNotes ? dpEsc(order.orderNotes) : '&nbsp;'}</div>
+      <div class="onf-signatures">
+        <div class="onf-sig"><div class="onf-sig-line"></div><div class="onf-sig-label">O Cliente</div></div>
+        <div class="onf-sig"><div class="onf-sig-line"></div><div class="onf-sig-label">Pela Cedriâmbar, Lda.</div></div>
+      </div>
+    </div>
+  `;
+}
+
+// ═══════════════════════════════════════════════════════════
 // ITEMS API
 // ═══════════════════════════════════════════════════════════
 function setConnectionStatus(s, label) {
@@ -1323,11 +1420,10 @@ function renderOrderPick(order, isDraft) {
         <div class="order-pick__id">${order.orderId}${order.orderType === 'Portas' ? ' <span class="order-card__type-badge">Portas</span>' : ''} · <span style="color:var(--t3)">${order.status}</span></div>
         <div class="order-pick__client">${order.clientName}</div>
         ${order.orderNotes ? `<div style="font-size:13px;color:var(--t3);margin-top:4px">${order.orderNotes}</div>` : ''}
-        ${order.orderType === 'Portas' && order.doorsData
-          ? `<div style="display:flex;gap:8px;margin-top:8px">
-               <button class="btn-ghost" id="view-ficha-btn">Ver ficha</button>
-               <button class="btn-ghost" id="print-ficha-btn" style="display:none">Imprimir</button>
-             </div>` : ''}
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <button class="btn-ghost" id="view-ficha-btn">Ver ficha</button>
+          <button class="btn-ghost" id="print-ficha-btn" style="display:none">Imprimir</button>
+        </div>
         <div class="order-pick__progress-row">
           <span class="order-pick__progress-label">${pickedCount} de ${order.lines.length} separados</span>
           ${!isDraft && order.status === 'Enviado'
@@ -1411,8 +1507,8 @@ function renderOrderPick(order, isDraft) {
     setView('orders'); renderOrdersList();
   });
 
-  // Portas: show/hide the read-only printable ficha, rendered from the
-  // order's saved doorsData JSON.
+  // Ver ficha: shows the read-only ficha mirroring the printed Nota de
+  // Encomenda PDF — available for every order, Normal or Portas.
   const fichaBtn = panel.querySelector('#view-ficha-btn');
   const printFichaBtn = panel.querySelector('#print-ficha-btn');
   if (fichaBtn) {
@@ -1424,7 +1520,7 @@ function renderOrderPick(order, isDraft) {
         fichaBtn.textContent = 'Ver ficha';
         if (printFichaBtn) printFichaBtn.style.display = 'none';
       } else {
-        renderSavedDoorsDocument(slot, order);
+        renderOrderNoteFicha(slot, order);
         slot.style.display = '';
         fichaBtn.textContent = 'Esconder ficha';
         if (printFichaBtn) printFichaBtn.style.display = '';
