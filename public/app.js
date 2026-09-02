@@ -885,6 +885,11 @@ function renderOrderCreate() {
           placeholder="Notas opcionais…" style="resize:none"></textarea>
       </div>
 
+      <div class="order-create__section">
+        <div class="section-label">Pré-visualização</div>
+        <div id="order-preview-slot"></div>
+      </div>
+
       <div class="order-actions">
         <button class="order-action-btn order-action-btn--draft" id="save-draft-btn">Rascunho</button>
         <button class="order-action-btn order-action-btn--send" id="send-order-btn">Enviar para armazém</button>
@@ -896,6 +901,7 @@ function renderOrderCreate() {
   panel.querySelector('#new-client-btn').addEventListener('click', () => showNewClientForm());
   panel.querySelector('#save-draft-btn').addEventListener('click', () => submitOrder('Rascunho'));
   panel.querySelector('#send-order-btn').addEventListener('click', () => submitOrder('Enviado'));
+  panel.querySelector('#order-notes-input').addEventListener('input', updateOrderPreview);
 
   const typeToggle = panel.querySelector('#order-type-toggle');
   typeToggle.querySelectorAll('button').forEach(btn => {
@@ -910,11 +916,48 @@ function renderOrderCreate() {
       panel.querySelector('#order-lines-label').textContent = isPortas ? 'Outros materiais (placas, ferragens, etc.)' : 'Artigos';
       panel.querySelector('#order-doors-section').style.display = isPortas ? '' : 'none';
       if (isPortas) renderDoorsBuilder(panel.querySelector('#dp-embed-root'));
+      updateOrderPreview();
     });
   });
 
   wireClientSearch(panel);
   renderOrderLines();
+  updateOrderPreview();
+}
+
+// Builds a not-yet-saved order object from whatever's currently filled in
+// (client, normal items, door types if in Portas mode, notes) and renders
+// it through the same renderOrderNoteFicha() used for submitted orders —
+// so what the person sees while filling the form is exactly what the
+// printed Nota de Encomenda will look like, before they even submit it.
+function updateOrderPreview() {
+  const slot = document.getElementById('order-preview-slot');
+  if (!slot) return;
+
+  const client = orderState.newOrderClient;
+  const isPortas = orderState.newOrderType === 'Portas';
+  const normalLines = orderState.newOrderLines.map(line => ({ ...line, qtyOrdered: baseQty(line) }));
+  const doorLines = (isPortas && typeof computeDoorsBom === 'function')
+    ? computeDoorsBom(dpTypes).map((r, i) => ({
+        sku: `PORTA-${i + 1}`, descricao: r.descricao, qtyOrdered: r.qty,
+        unidade: 'un', unitPrice: 0, comprimento: r.indent ? '' : (r.altura || ''),
+        largura: r.indent ? '' : (r.largura || ''), espessura: r.indent ? '' : (r.espessura || ''),
+        discountPct: 0
+      }))
+    : [];
+
+  const previewOrder = {
+    orderId: '(a atribuir)',
+    createdAt: new Date().toISOString(),
+    salesperson: auth.user?.name || '',
+    clientId: client?.id || '',
+    clientName: client?.name || '',
+    orderNotes: document.getElementById('order-notes-input')?.value || '',
+    orderType: orderState.newOrderType,
+    lines: [...doorLines, ...normalLines]
+  };
+
+  renderOrderNoteFicha(slot, previewOrder);
 }
 
 function wireClientSearch(root) {
@@ -937,7 +980,9 @@ function wireClientSearch(root) {
       selected.style.display    = 'none';
       results.style.display     = 'none';
       input.focus();
+      updateOrderPreview();
     });
+    updateOrderPreview();
   }
 
   function renderResults(q) {
@@ -992,6 +1037,7 @@ function baseQty(line) {
 function renderOrderLines() {
   const list = $('#order-lines-list');
   if (!list) return;
+  if (typeof updateOrderPreview === 'function') updateOrderPreview();
   if (orderState.newOrderLines.length === 0) { list.innerHTML = ''; return; }
 
   list.innerHTML = orderState.newOrderLines.map((line, idx) => {

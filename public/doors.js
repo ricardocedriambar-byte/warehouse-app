@@ -44,35 +44,6 @@ function renderDoorsBuilder(container) {
 
       <div class="section-label" style="margin-top:16px">Observações gerais</div>
       <textarea id="dp-obs-gerais" class="order-field doors-textarea" placeholder="Mecanizar blocos, envernizar, prazo, etc."></textarea>
-
-      <div class="section-label" style="margin-top:16px">Pré-visualização</div>
-      <div class="doors-doc" id="dp-document">
-        <div class="doors-doc__header">
-          <img class="doors-doc__logo" src="/icons/icon-512.png" alt="Cedriambar">
-          <div class="doors-doc__heading">
-            <h2>Ficha de Encomenda</h2>
-            <div class="doors-doc__sub" id="dp-out-sub"></div>
-          </div>
-          <div class="doors-doc__date" id="dp-out-date">—</div>
-        </div>
-
-        <div class="doors-doc__section-title">Materiais a separar</div>
-        <table class="doors-doc__bom" id="dp-out-bom"></table>
-
-        <div class="doors-doc__section-title">Detalhe por tipo</div>
-        <table class="doors-doc__table">
-          <thead>
-            <tr>
-              <th>Qtd</th><th>Medida</th><th>Tipo</th>
-              <th>Abertura</th><th>Vidro</th><th>Fechad. / Obs.</th>
-            </tr>
-          </thead>
-          <tbody id="dp-out-doors"></tbody>
-        </table>
-
-        <div class="doors-doc__obs-label">Observações gerais</div>
-        <div class="doors-doc__obs-value" id="dp-out-obs">&nbsp;</div>
-      </div>
     </div>
   `;
 
@@ -356,7 +327,7 @@ function computeDoorsBom(types) {
 
 function renderDoorsAll() {
   renderDoorsSummaryBar();
-  renderDoorsDocument();
+  if (typeof updateOrderPreview === 'function') updateOrderPreview();
 }
 
 function renderDoorsSummaryBar() {
