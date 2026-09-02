@@ -286,9 +286,14 @@ function computeDoorsBom(types) {
     const c = dpCalcType(t);
     const mat = (t.material || '').toUpperCase();
     const vidroLabel = t.vidro ? 'VIDRO' : 'TAPADO';
+    const duploLabel = t.tipo === 'dupla' ? 'DUPLO' : '';
     const aberturaLabel = ABERTURA_ABBREV[t.abertura] || '';
     const parentPrefix = t.tipo === 'passagem' ? 'PASSAGEM' : 'BLOCO';
-    const parentParts = [parentPrefix, vidroLabel, mat, aberturaLabel].filter(Boolean);
+    // "DUPLO" comes from the door's actual tipo (simples/dupla/passagem),
+    // never from the separate abertura dropdown (Esquerda/Direita/Dupla/
+    // Correr) — that field can be left blank even on a real double block,
+    // so it must never be the only place "duplo" shows up.
+    const parentParts = [parentPrefix, duploLabel, vidroLabel, mat, aberturaLabel].filter(Boolean);
     // Dimensions are NOT baked into the text — they go into their own
     // comprimento/largura/espessura fields (mapped altura→comprimento),
     // same as any normal catalog item, so they land in the Nota de
@@ -320,6 +325,9 @@ function computeDoorsBom(types) {
     if (t.tipo === 'dupla') {
       const leafDims = [t.altura, t.largura].filter(Boolean).join('X');
       childRow(c.leafCount, `Porta${mat ? ' ' + mat : ''}${leafDims ? ' ' + leafDims + 'MM' : ''}`);
+      // Every double block takes exactly 1 batente profile (fixed spec,
+      // not tied to the door's own material — same treatment as Bite).
+      childRow(t.qty, 'Perfil Batente MDF 2440X30X10MM');
     }
 
     const aduelaQty = Math.round(c.aduelaPecas * 100) / 100;
