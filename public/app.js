@@ -1327,11 +1327,15 @@ async function confirmAndSendOrder() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ order: previewOrder, client })
     });
-    if (!res.ok) throw new Error('preview failed');
+    if (!res.ok) {
+      let detail = '';
+      try { detail = (await res.json()).error || ''; } catch {}
+      throw new Error(detail || `HTTP ${res.status}`);
+    }
     const blob = await res.blob();
     showSendPreviewOverlay(URL.createObjectURL(blob), () => sendOrderPayload(payload));
   } catch (err) {
-    showError(err, 'Não foi possível gerar a pré-visualização da encomenda.');
+    showError(err, `Não foi possível gerar a pré-visualização${err.message ? ': ' + err.message : ''}.`);
   } finally {
     if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = 'Enviar para armazém'; }
   }
@@ -1491,7 +1495,11 @@ function renderOrderPick(order, isDraft) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ order, client: fullClient })
         });
-        if (!res.ok) throw new Error('preview failed');
+        if (!res.ok) {
+          let detail = '';
+          try { detail = (await res.json()).error || ''; } catch {}
+          throw new Error(detail || `HTTP ${res.status}`);
+        }
         const blob = await res.blob();
         showSendPreviewOverlay(URL.createObjectURL(blob), async () => {
           await apiPatch('/api/orders', { orderId: order.orderId, status: 'Enviado' });
@@ -1502,7 +1510,7 @@ function renderOrderPick(order, isDraft) {
           notifyOrderByEmail(updated || order, fullClient);
         });
       } catch (err) {
-        showError(err, 'Não foi possível gerar a pré-visualização da encomenda.');
+        showError(err, `Não foi possível gerar a pré-visualização${err.message ? ': ' + err.message : ''}.`);
       } finally {
         draftSendBtn.textContent = 'Enviar para armazém'; draftSendBtn.disabled = false;
       }
