@@ -1332,8 +1332,8 @@ async function confirmAndSendOrder() {
       try { detail = (await res.json()).error || ''; } catch {}
       throw new Error(detail || `HTTP ${res.status}`);
     }
-    const blob = await res.blob();
-    showSendPreviewOverlay(URL.createObjectURL(blob), () => sendOrderPayload(payload));
+    const blob = await res.arrayBuffer();
+    showSendPreviewOverlay(blob, () => sendOrderPayload(payload));
   } catch (err) {
     showError(err, `Não foi possível gerar a pré-visualização${err.message ? ': ' + err.message : ''}.`);
   } finally {
@@ -1341,8 +1341,47 @@ async function confirmAndSendOrder() {
   }
 }
 
-function showSendPreviewOverlay(pdfUrl, onConfirm) {
-  const app = $('#app');
+// PDF.js is loaded lazily from a CDN, only the first time a preview is
+// needed — it renders the PDF into a <canvas> ourselves instead of
+// relying on the platform's native PDF viewer, which is unreliable
+// inside an embedded view on both iOS Safari and Android Chrome (shows
+// a bare "download" prompt instead of the actual page).
+function loadPdfJs() {
+  if (window.pdfjsLib) return Promise.resolve();
+  if (window.__pdfjsLoadingPromise) return window.__pdfjsLoadingPromise;
+  window.__pdfjsLoadingPromise = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+    script.onload = () => {
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      resolve();
+    };
+    script.onerror = () => reject(new Error('Falha ao carregar o visualizador de PDF'));
+    document.head.appendChild(script);
+  });
+  return window.__pdfjsLoadingPromise;
+}
+
+async function renderPdfIntoCanvas(canvas, pdfBytes) {
+  await loadPdfJs();
+  const pdf = await window.pdfjsLib.getDocument({ data: pdfBytes }).promise;
+  const page = await pdf.getPage(1);
+  const containerWidth = canvas.parentElement.clientWidth;
+  const baseViewport = page.getViewport({ scale: 1 });
+  const dpr = window.devicePixelRatio || 1;
+  const scale = (containerWidth / baseViewport.width) * dpr;
+  const viewport = page.getViewport({ scale });
+
+  canvas.width = viewport.width;
+  canvas.height = viewport.height;
+  canvas.style.width = containerWidth + 'px';
+  canvas.style.height = (viewport.height / dpr) + 'px';
+
+  await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+}
+
+function showSendPreviewOverlay(pdfBytes, onConfirm) {
   const overlay = document.createElement('div');
   overlay.className = 'send-preview-overlay';
   overlay.innerHTML = `
@@ -1350,14 +1389,23 @@ function showSendPreviewOverlay(pdfUrl, onConfirm) {
       <span class="send-preview-overlay__title">Confirmar encomenda</span>
       <button class="send-preview-overlay__close" id="send-preview-close" aria-label="Fechar">✕</button>
     </div>
-    <iframe class="send-preview-overlay__frame" src="${pdfUrl}" title="Nota de Encomenda"></iframe>
+    <div class="send-preview-overlay__scroll" id="send-preview-scroll">
+      <canvas class="send-preview-overlay__canvas" id="send-preview-canvas"></canvas>
+    </div>
     <div class="send-preview-overlay__actions">
       <button class="order-action-btn order-action-btn--draft" id="send-preview-back">Voltar a editar</button>
       <button class="order-action-btn order-action-btn--send" id="send-preview-confirm">Confirmar e enviar</button>
     </div>`;
   document.body.appendChild(overlay);
 
-  const cleanup = () => { URL.revokeObjectURL(pdfUrl); overlay.remove(); };
+  const canvas = overlay.querySelector('#send-preview-canvas');
+  renderPdfIntoCanvas(canvas, pdfBytes).catch(err => {
+    console.error(err);
+    overlay.querySelector('#send-preview-scroll').innerHTML =
+      '<p class="send-preview-overlay__fallback">Não foi possível mostrar a pré-visualização, mas podes continuar a enviar normalmente.</p>';
+  });
+
+  const cleanup = () => overlay.remove();
   overlay.querySelector('#send-preview-close').addEventListener('click', cleanup);
   overlay.querySelector('#send-preview-back').addEventListener('click', cleanup);
   overlay.querySelector('#send-preview-confirm').addEventListener('click', async () => {
@@ -1500,8 +1548,8 @@ function renderOrderPick(order, isDraft) {
           try { detail = (await res.json()).error || ''; } catch {}
           throw new Error(detail || `HTTP ${res.status}`);
         }
-        const blob = await res.blob();
-        showSendPreviewOverlay(URL.createObjectURL(blob), async () => {
+        const blob = await res.arrayBuffer();
+        showSendPreviewOverlay(blob, async () => {
           await apiPatch('/api/orders', { orderId: order.orderId, status: 'Enviado' });
           await loadOrders({ silent: true });
           const updated = orderState.orders.find(o => o.orderId === order.orderId);
