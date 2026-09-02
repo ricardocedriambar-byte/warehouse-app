@@ -297,10 +297,13 @@ function computeDoorsBom(types) {
     // The BLOCO/PASSAGEM line's quantity is the number of blocks actually
     // ordered (t.qty) — NOT the number of door leaves. A "bloco duplo" is
     // one block made of 2 portas (leaves); it must never be counted or
-    // described as if it were 2 separate blocks.
+    // described as if it were 2 separate blocks. Its own largura is the
+    // combined opening width (2 leaves) — "largura" as entered is per
+    // door, so the block spans double that.
+    const blocoLargura = (t.tipo === 'dupla' && t.largura) ? Math.round(t.largura * 2 * 100) / 100 : (t.largura || '');
     rows.push({
       qty: t.qty, descricao: parentParts.join(' '), indent: false,
-      altura: t.altura || '', largura: t.largura || '', espessura: t.espessura || ''
+      altura: t.altura || '', largura: blocoLargura, espessura: t.espessura || ''
     });
 
     // Component (child) rows: the piece count is folded into the text
@@ -310,9 +313,13 @@ function computeDoorsBom(types) {
 
     // Dupla = 2 portas (leaves) per block — called out explicitly as its
     // own component line, since it's the one thing about a "bloco duplo"
-    // that isn't obvious from the block line alone.
+    // that isn't obvious from the block line alone. "largura" is already
+    // per leaf (not the total opening), so it's used as-is — described
+    // the same way a real door would be identified (material + its own
+    // altura×largura), not just "(folha)".
     if (t.tipo === 'dupla') {
-      childRow(c.leafCount, 'Porta (folha)');
+      const leafDims = [t.altura, t.largura].filter(Boolean).join('X');
+      childRow(c.leafCount, `Porta${mat ? ' ' + mat : ''}${leafDims ? ' ' + leafDims + 'MM' : ''}`);
     }
 
     const aduelaQty = Math.round(c.aduelaPecas * 100) / 100;
