@@ -294,8 +294,12 @@ function computeDoorsBom(types) {
     // same as any normal catalog item, so they land in the Nota de
     // Encomenda's own Comp./Larg./Esp. columns instead of being read
     // out of a sentence.
+    // The BLOCO/PASSAGEM line's quantity is the number of blocks actually
+    // ordered (t.qty) — NOT the number of door leaves. A "bloco duplo" is
+    // one block made of 2 portas (leaves); it must never be counted or
+    // described as if it were 2 separate blocks.
     rows.push({
-      qty: c.leafCount, descricao: parentParts.join(' '), indent: false,
+      qty: t.qty, descricao: parentParts.join(' '), indent: false,
       altura: t.altura || '', largura: t.largura || '', espessura: t.espessura || ''
     });
 
@@ -303,6 +307,13 @@ function computeDoorsBom(types) {
     // itself ("— 6 pç") rather than shown in the Qtd. Ped. column, which
     // is reserved for the parent's own order quantity.
     const childRow = (qty, text) => rows.push({ qty, descricao: `${INDENT}${text} — ${dpFmtNum(qty)} pç`, indent: true });
+
+    // Dupla = 2 portas (leaves) per block — called out explicitly as its
+    // own component line, since it's the one thing about a "bloco duplo"
+    // that isn't obvious from the block line alone.
+    if (t.tipo === 'dupla') {
+      childRow(c.leafCount, 'Porta (folha)');
+    }
 
     const aduelaQty = Math.round(c.aduelaPecas * 100) / 100;
     if (t.tipo === 'passagem') {
