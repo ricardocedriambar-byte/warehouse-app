@@ -1456,3 +1456,25 @@ table.doors-doc__table tr:nth-child(even) td { background: #faf6ec; }
   justify-content: center; gap: var(--sp-3); color: #fff; font-size: 13px;
   background: rgba(0,0,0,0.55); text-align: center; padding: var(--sp-4);
 }
+.camera-view__spinner {
+  width: 28px; height: 28px; border-radius: 50%;
+  border: 3px solid rgba(255,255,255,0.25); border-top-color: #fff;
+  animation: camera-spin 0.8s linear infinite;
+}
+@keyframes camera-spin { to { transform: rotate(360deg); } }
+
+.camera-ptz {
+  display: grid; grid-template-columns: 56px 56px 56px; grid-template-rows: 56px 56px;
+  gap: 8px; justify-content: center; margin-top: var(--sp-2);
+}
+.camera-ptz__btn {
+  display: flex; align-items: center; justify-content: center;
+  background: var(--s2); border: 1px solid var(--s4); border-radius: var(--r-md);
+  color: var(--t1); touch-action: none; user-select: none;
+  -webkit-user-select: none;
+}
+.camera-ptz__btn:active { background: var(--s3); }
+.camera-ptz__btn--up    { grid-column: 2; grid-row: 1; }
+.camera-ptz__btn--left  { grid-column: 1; grid-row: 2; }
+.camera-ptz__btn--right { grid-column: 3; grid-row: 2; }
+.camera-ptz__btn--down  { grid-column: 2; grid-row: 2; }

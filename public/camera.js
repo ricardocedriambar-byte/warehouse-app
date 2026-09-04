@@ -1,15 +1,19 @@
 // camera.js — Câmara (leitor de vídeo nativo, ligado diretamente ao go2rtc)
 //
-// Em vez de mostrar a interface do Frigate num iframe, isto fala
-// diretamente com a API do go2rtc (o motor de streaming que já vem
-// dentro do Frigate) usando WebRTC "puro" — o browser liga-se por
-// WebSocket para negociar a ligação, e o vídeo chega por WebRTC como
-// qualquer chamada de vídeo. O resultado é um leitor com a cara da
-// própria app, sem nada emprestado.
+// Em vez de mostrar a interface do Frigate/go2rtc num iframe, isto fala
+// diretamente com a API do go2rtc usando WebRTC "puro" — o browser
+// liga-se por WebSocket para negociar a ligação, e o vídeo chega por
+// WebRTC como qualquer chamada de vídeo. O resultado é um leitor com a
+// cara da própria app, sem nada emprestado.
 //
 // Protocolo do go2rtc (estável, é o mesmo que o próprio interface web
 // dele usa): abre um WebSocket para /api/ws?src=<nome>, troca uma
 // oferta/resposta SDP e candidatos ICE em mensagens JSON simples.
+//
+// O PTZ (mover a câmara) usa ONVIF, através de /api/camera-ptz — a Tapo
+// não tem nenhuma API aberta própria para isto, ONVIF é a única forma
+// não-invertida de o fazer, e mesmo essa só o backend consegue falar
+// (a câmara está na rede de casa, não é alcançável pelo browser).
 
 const CAMERA_API_HOST = 'api-frigate.aknz9s.easypanel.host';
 const CAMERA_STREAM_NAME = 'traseira';
@@ -41,17 +45,29 @@ function renderCameraPanel() {
         <div class="camera-view__frame">
           <video id="camera-video" class="camera-view__video" autoplay playsinline muted></video>
           <div class="camera-view__overlay" id="camera-overlay">
+            <div class="camera-view__spinner" aria-hidden="true"></div>
             <span id="camera-overlay-text">A ligar à câmara…</span>
             <button class="btn-ghost" id="camera-retry-btn" style="display:none">Tentar novamente</button>
-            <button class="btn-ghost" id="camera-tap-btn" style="display:none">Toca para reproduzir</button>
           </div>
+        </div>
+        <div class="camera-ptz" id="camera-ptz">
+          <button class="camera-ptz__btn camera-ptz__btn--up" data-dir="up" aria-label="Mover para cima">
+            <svg viewBox="0 0 24 24" width="22" height="22"><path d="M12 5l7 7-1.4 1.4L13 8.8V19h-2V8.8l-4.6 4.6L5 12z" fill="currentColor"/></svg>
+          </button>
+          <button class="camera-ptz__btn camera-ptz__btn--left" data-dir="left" aria-label="Mover para a esquerda">
+            <svg viewBox="0 0 24 24" width="22" height="22"><path d="M19 12l-7 7-1.4-1.4L15.2 13H5v-2h10.2l-4.6-4.6L12 5z" fill="currentColor"/></svg>
+          </button>
+          <button class="camera-ptz__btn camera-ptz__btn--right" data-dir="right" aria-label="Mover para a direita">
+            <svg viewBox="0 0 24 24" width="22" height="22"><path d="M5 12l7-7 1.4 1.4L8.8 11H19v2H8.8l4.6 4.6L12 19z" fill="currentColor"/></svg>
+          </button>
+          <button class="camera-ptz__btn camera-ptz__btn--down" data-dir="down" aria-label="Mover para baixo">
+            <svg viewBox="0 0 24 24" width="22" height="22"><path d="M12 19l-7-7 1.4-1.4L11 15.2V5h2v10.2l4.6-4.6L19 12z" fill="currentColor"/></svg>
+          </button>
         </div>
       </div>
     `;
     document.getElementById('camera-retry-btn').addEventListener('click', startCameraStream);
-    document.getElementById('camera-tap-btn').addEventListener('click', () => {
-      document.getElementById('camera-video').play().then(() => setCameraStatus('live', 'Ao vivo'));
-    });
+    wireCameraPtz();
     cameraRendered = true;
   }
 
@@ -70,10 +86,9 @@ function setCameraStatus(state, text) {
   const overlay = document.getElementById('camera-overlay');
   const overlayText = document.getElementById('camera-overlay-text');
   const retryBtn = document.getElementById('camera-retry-btn');
-  const tapBtn = document.getElementById('camera-tap-btn');
   if (!dot) return;
 
-  dot.dataset.state = state === 'tap' ? 'connecting' : state;
+  dot.dataset.state = state;
   if (statusText) statusText.textContent = text;
 
   if (state === 'live') {
@@ -82,7 +97,6 @@ function setCameraStatus(state, text) {
     overlay.style.display = 'flex';
     if (overlayText) overlayText.textContent = text;
     if (retryBtn) retryBtn.style.display = state === 'error' ? '' : 'none';
-    if (tapBtn) tapBtn.style.display = state === 'tap' ? '' : 'none';
   }
 }
 
@@ -105,11 +119,12 @@ function startCameraStream() {
 
   pc.ontrack = (ev) => {
     video.srcObject = ev.streams[0];
-    setCameraStatus('live', 'Ao vivo');
-    // Autoplay can silently fail on some mobile browsers even when muted —
-    // force it, and fall back to a tap-to-play prompt if it's rejected.
-    video.play().catch(() => setCameraStatus('tap', 'Toca para reproduzir'));
+    // The overlay's own spinner stays up until the video actually starts
+    // playing (not just until the track arrives) — onplaying fires once
+    // real frames are being decoded, which is the honest "it's live" signal.
+    video.play().catch(err => console.error('[camera] play() falhou', err));
   };
+  video.onplaying = () => setCameraStatus('live', 'Ao vivo');
 
   // Console-only diagnostics — check these in the browser devtools if the
   // picture stays black: iceConnectionState tells us whether real media
@@ -167,4 +182,29 @@ function startCameraStream() {
       setCameraStatus('error', 'Não foi possível ligar à câmara.');
     }
   };
+}
+
+// PTZ (pan/tilt) — press-and-hold buttons: send the direction on press,
+// send "stop" on release, matching ONVIF's ContinuousMove/Stop model.
+function wireCameraPtz() {
+  const ptz = document.getElementById('camera-ptz');
+  if (!ptz) return;
+
+  ptz.querySelectorAll('[data-dir]').forEach(btn => {
+    const dir = btn.dataset.dir;
+    const start = (e) => { e.preventDefault(); sendPtz(dir); };
+    const stop = () => sendPtz('stop');
+    btn.addEventListener('pointerdown', start);
+    btn.addEventListener('pointerup', stop);
+    btn.addEventListener('pointerleave', stop);
+    btn.addEventListener('pointercancel', stop);
+  });
+}
+
+function sendPtz(direction) {
+  fetch('/api/camera-ptz', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ direction }),
+  }).catch(err => console.error('[camera] PTZ falhou', err));
 }
