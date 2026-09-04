@@ -37,11 +37,15 @@ function renderCameraPanel() {
           <div class="camera-view__overlay" id="camera-overlay">
             <span id="camera-overlay-text">A ligar à câmara…</span>
             <button class="btn-ghost" id="camera-retry-btn" style="display:none">Tentar novamente</button>
+            <button class="btn-ghost" id="camera-tap-btn" style="display:none">Toca para reproduzir</button>
           </div>
         </div>
       </div>
     `;
     document.getElementById('camera-retry-btn').addEventListener('click', startCameraStream);
+    document.getElementById('camera-tap-btn').addEventListener('click', () => {
+      document.getElementById('camera-video').play().then(() => setCameraStatus('live', 'Ao vivo'));
+    });
     cameraRendered = true;
   }
 
@@ -60,9 +64,10 @@ function setCameraStatus(state, text) {
   const overlay = document.getElementById('camera-overlay');
   const overlayText = document.getElementById('camera-overlay-text');
   const retryBtn = document.getElementById('camera-retry-btn');
+  const tapBtn = document.getElementById('camera-tap-btn');
   if (!dot) return;
 
-  dot.dataset.state = state;
+  dot.dataset.state = state === 'tap' ? 'connecting' : state;
   if (statusText) statusText.textContent = text;
 
   if (state === 'live') {
@@ -71,6 +76,7 @@ function setCameraStatus(state, text) {
     overlay.style.display = 'flex';
     if (overlayText) overlayText.textContent = text;
     if (retryBtn) retryBtn.style.display = state === 'error' ? '' : 'none';
+    if (tapBtn) tapBtn.style.display = state === 'tap' ? '' : 'none';
   }
 }
 
@@ -91,9 +97,19 @@ function startCameraStream() {
   pc.ontrack = (ev) => {
     video.srcObject = ev.streams[0];
     setCameraStatus('live', 'Ao vivo');
+    // Autoplay can silently fail on some mobile browsers even when muted —
+    // force it, and fall back to a tap-to-play prompt if it's rejected.
+    video.play().catch(() => setCameraStatus('tap', 'Toca para reproduzir'));
   };
 
+  // Console-only diagnostics — check these in the browser devtools if the
+  // picture stays black: iceConnectionState tells us whether real media
+  // packets are actually negotiated (not just the signaling handshake).
+  pc.oniceconnectionstatechange = () => {
+    console.log('[camera] iceConnectionState:', pc.iceConnectionState);
+  };
   pc.onconnectionstatechange = () => {
+    console.log('[camera] connectionState:', pc.connectionState);
     if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
       setCameraStatus('error', 'A ligação caiu. Tenta outra vez.');
     }
@@ -134,8 +150,11 @@ function startCameraStream() {
   };
 
   ws.onerror = () => setCameraStatus('error', 'Não foi possível ligar à câmara.');
+  // go2rtc closes the signaling WebSocket right after negotiation
+  // finishes — that's expected, not a failure, so this only reports an
+  // error if the peer connection never got anywhere at all (still 'new').
   ws.onclose = () => {
-    if (cameraPc?.connectionState !== 'connected') {
+    if (cameraPc && (cameraPc.connectionState === 'new' || cameraPc.connectionState === 'failed')) {
       setCameraStatus('error', 'Não foi possível ligar à câmara.');
     }
   };
