@@ -13,6 +13,12 @@
 
 const CAMERA_API_HOST = 'api-frigate.aknz9s.easypanel.host';
 const CAMERA_STREAM_NAME = 'traseira';
+// Must match the ice_servers entry in go2rtc.yaml exactly — both ends of
+// a WebRTC connection negotiate independently, so the browser needs its
+// own copy of the TURN credentials, not just go2rtc.
+const CAMERA_TURN_HOST = '51.170.37.143:3478';
+const CAMERA_TURN_USERNAME = 'camuser';
+const CAMERA_TURN_CREDENTIAL = 'umapasswordforte123';
 
 let cameraPc = null;
 let cameraWs = null;
@@ -88,7 +94,10 @@ function startCameraStream() {
   if (!video) return;
 
   const pc = new RTCPeerConnection({
-    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+    iceServers: [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: `turn:${CAMERA_TURN_HOST}`, username: CAMERA_TURN_USERNAME, credential: CAMERA_TURN_CREDENTIAL }
+    ]
   });
   cameraPc = pc;
   pc.addTransceiver('video', { direction: 'recvonly' });
