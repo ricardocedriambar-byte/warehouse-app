@@ -143,7 +143,6 @@ function setView(name, { pushHistory = true } = {}) {
   $$('.tabbar__btn').forEach(el => el.dataset.active = String(el.dataset.goto === name));
   $('.topbar')?.classList.toggle('topbar--hidden', name === 'viaturas');
   if (name !== 'scan') stopScanner();
-  if (name !== 'camera' && typeof stopCameraPanel === 'function') stopCameraPanel();
   if (pushHistory) {
     viewHistory.push(name);
     history.pushState({ view: name }, '', '');
@@ -1702,7 +1701,6 @@ function init() {
         renderResourcesPanel();
       }
       if (target === 'viaturas') renderViaturasPanel();
-      if (target === 'camera') renderCameraPanel();
     });
   });
 
