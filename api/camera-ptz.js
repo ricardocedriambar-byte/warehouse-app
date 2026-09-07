@@ -40,6 +40,7 @@ module.exports = async (req, res) => {
     res.status(200).json({ ok: true });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: err.message || 'Falha ao mover a câmara' });
+    const detail = err.cause ? ` — ${err.cause.code || err.cause.message || err.cause}` : '';
+    res.status(500).json({ error: (err.message || 'Falha ao mover a câmara') + detail });
   }
 };
