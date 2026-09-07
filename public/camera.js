@@ -111,7 +111,11 @@ function startCameraStream() {
     iceServers: [
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: `turn:${CAMERA_TURN_HOST}`, username: CAMERA_TURN_USERNAME, credential: CAMERA_TURN_CREDENTIAL }
-    ]
+    ],
+    // Direct/host candidates never reach across the Oracle VM's network in
+    // this setup — confirmed by testing, not a guess. Skipping straight to
+    // the TURN relay avoids waiting out that doomed attempt every time.
+    iceTransportPolicy: 'relay'
   });
   cameraPc = pc;
   pc.addTransceiver('video', { direction: 'recvonly' });
@@ -206,5 +210,12 @@ function sendPtz(direction) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ direction }),
-  }).catch(err => console.error('[camera] PTZ falhou', err));
+  })
+    .then(async (res) => {
+      if (!res.ok) {
+        const body = await res.text();
+        console.error(`[camera] PTZ falhou (${res.status}):`, body);
+      }
+    })
+    .catch(err => console.error('[camera] PTZ falhou (rede)', err));
 }
