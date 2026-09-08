@@ -1014,6 +1014,41 @@ function baseQty(line) {
   return line.qtyOrdered || 0;
 }
 
+// Looks the line's SKU up in the loaded catalog and, if it tracks stock
+// and the requested (base-unit) quantity exceeds what's currently
+// available, returns a short warning string — otherwise ''. Used both for
+// the live inline hint while building an order and for the pre-send
+// shortage summary in findInsufficientStockLines below.
+function stockWarningText(line) {
+  const item = state.items.find(i => i.sku === line.sku);
+  if (!item || item.disponivel === null || item.disponivel === undefined) return '';
+  const requested = baseQty(line);
+  if (requested <= item.disponivel) return '';
+  return `Apenas ${fmtNumber(item.disponivel)} ${item.unidade || line.unidade || 'un'} disponíveis`;
+}
+
+// Same check as stockWarningText, run across a whole payload/order's lines
+// (qtyOrdered already in the item's base unit at this point) — used right
+// before an order is actually sent to the warehouse, since that's the
+// moment reservation kicks in and it's too late to notice quietly.
+function findInsufficientStockLines(lines) {
+  const shortages = [];
+  for (const line of lines || []) {
+    const item = state.items.find(i => i.sku === line.sku);
+    if (!item || item.disponivel === null || item.disponivel === undefined) continue;
+    if ((line.qtyOrdered || 0) > item.disponivel) {
+      shortages.push({
+        sku: line.sku,
+        descricao: item.descricao || line.descricao || '',
+        requested: line.qtyOrdered || 0,
+        available: item.disponivel,
+        unidade: item.unidade || line.unidade || 'un'
+      });
+    }
+  }
+  return shortages;
+}
+
 function renderOrderLines() {
   const list = $('#order-lines-list');
   if (!list) return;
@@ -1074,6 +1109,7 @@ function renderOrderLines() {
         </div>
 
         <div id="qty-label-${idx}" class="order-line-card__equiv">${convEquiv}</div>
+        <div id="stock-warn-${idx}" class="order-line-card__stock-warn">${stockWarningText(line)}</div>
       </div>`;
   }).join('');
 
@@ -1113,6 +1149,9 @@ function renderOrderLines() {
           ? `= ${fmtNumber(qty * line.dimensaoM2, 3)} ${nativeUnit}`
           : `= ${fmtNumber(qty / line.dimensaoM2, 2)} un`;
       }
+
+      const warnEl = list.querySelector(`#stock-warn-${idx}`);
+      if (warnEl) warnEl.textContent = stockWarningText(line);
     });
   });
 }
@@ -1468,7 +1507,7 @@ async function confirmAndSendOrder() {
       throw new Error(detail || `HTTP ${res.status}`);
     }
     const blob = await res.arrayBuffer();
-    showSendPreviewOverlay(blob, () => sendOrderPayload(payload));
+    showSendPreviewOverlay(blob, () => sendOrderPayload(payload), findInsufficientStockLines(payload.lines));
   } catch (err) {
     showError(err, `Não foi possível gerar a pré-visualização${err.message ? ': ' + err.message : ''}.`);
   } finally {
@@ -1516,20 +1555,35 @@ async function renderPdfIntoCanvas(canvas, pdfBytes) {
   await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
 }
 
-function showSendPreviewOverlay(pdfBytes, onConfirm) {
+function showSendPreviewOverlay(pdfBytes, onConfirm, shortages = []) {
   const overlay = document.createElement('div');
   overlay.className = 'send-preview-overlay';
+  // Soft warning, not a hard block: reservation only starts once the order
+  // is actually sent, and there's no check before this point stopping
+  // someone from ordering more than what's available — so this is the
+  // last moment to notice before the warehouse does instead. Sending
+  // anyway is still one tap away, since a real, if unusual, reason to
+  // order over stock (an incoming restock, a customer waiting either way)
+  // shouldn't be blocked outright.
+  const shortageBanner = shortages.length > 0 ? `
+    <div class="stock-warning-banner">
+      <div class="stock-warning-banner__title">⚠ Stock insuficiente para ${shortages.length} artigo${shortages.length !== 1 ? 's' : ''}</div>
+      <ul class="stock-warning-banner__list">
+        ${shortages.map(s => `<li>${s.sku} — ${s.descricao}: pede ${fmtNumber(s.requested)} ${s.unidade}, há ${fmtNumber(s.available)} disponível</li>`).join('')}
+      </ul>
+    </div>` : '';
   overlay.innerHTML = `
     <div class="send-preview-overlay__header">
       <span class="send-preview-overlay__title">Confirmar encomenda</span>
       <button class="send-preview-overlay__close" id="send-preview-close" aria-label="Fechar">✕</button>
     </div>
+    ${shortageBanner}
     <div class="send-preview-overlay__scroll" id="send-preview-scroll">
       <canvas class="send-preview-overlay__canvas" id="send-preview-canvas"></canvas>
     </div>
     <div class="send-preview-overlay__actions">
       <button class="order-action-btn order-action-btn--draft" id="send-preview-back">Voltar a editar</button>
-      <button class="order-action-btn order-action-btn--send" id="send-preview-confirm">Confirmar e enviar</button>
+      <button class="order-action-btn order-action-btn--send" id="send-preview-confirm">${shortages.length > 0 ? 'Enviar mesmo assim' : 'Confirmar e enviar'}</button>
     </div>`;
   document.body.appendChild(overlay);
 
@@ -1691,7 +1745,7 @@ function renderOrderPick(order, isDraft) {
           if (updated) renderOrderPick(updated, false);
           toast('Encomenda enviada para armazém', 'success');
           notifyOrderByEmail(updated || order, fullClient);
-        });
+        }, findInsufficientStockLines(order.lines));
       } catch (err) {
         showError(err, `Não foi possível gerar a pré-visualização${err.message ? ': ' + err.message : ''}.`);
       } finally {

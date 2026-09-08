@@ -6,7 +6,7 @@
 // the Etiquetas sheet by the quantity picked. Logs both changes.
 
 const { updateLinePicked } = require('../lib/orders');
-const { findItemBySku, updateItemFields, appendLogEntry, adjustReservado } = require('../lib/sheets');
+const { findItemBySku, adjustStock, appendLogEntry, adjustReservado } = require('../lib/sheets');
 
 module.exports = async (req, res) => {
   if (req.method !== 'POST') {
@@ -40,9 +40,13 @@ module.exports = async (req, res) => {
       const piecesPicked = (item.unidade && item.unidade !== 'un' && item.dimensaoM2)
         ? qty / item.dimensaoM2
         : qty;
-      const currentStock = item.stock || 0;
-      const newStock = currentStock - piecesPicked;
-      await updateItemFields(item.rowNumber, { stock: newStock });
+      // adjustStock re-reads and verifies internally (see lib/sheets.js) so
+      // two lines for the same SKU being picked at nearly the same moment
+      // — plausible whenever two orders share a common part — don't lose
+      // one decrement to the other.
+      const stockResult = await adjustStock(sku, -piecesPicked);
+      const currentStock = stockResult ? stockResult.oldStock : (item.stock || 0);
+      const newStock     = stockResult ? stockResult.newStock : currentStock - piecesPicked;
       await appendLogEntry({
         sku,
         descricao: item.descricao,
