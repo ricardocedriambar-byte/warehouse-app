@@ -70,7 +70,10 @@ async function loadDoorMaterials() {
   try {
     const res = await fetch('/api/door-materials');
     const data = await res.json();
-    dpMaterials = data.materials || [];
+    // Trim at the source so a stray leading/trailing space typed into the
+    // MateriaisPortas sheet tab can't silently create a duplicate-looking
+    // material or break the dropdown's selected-value match.
+    dpMaterials = (data.materials || []).map(m => (m || '').toString().trim()).filter(Boolean);
   } catch (err) {
     console.error('Falha ao carregar materiais', err);
     dpMaterials = [];
@@ -115,15 +118,16 @@ function renderTypesList() {
           <span class="doors-stepper__val">${t.qty}</span>
           <button type="button" class="doors-stepper__btn" data-act="inc">+</button>
         </div>
-        <div class="doors-type__summary" data-act="expand">${dpEsc(dpSummaryText(t))}</div>
+        <div class="doors-type__summary${doorTypeIssues(t).length ? ' doors-type__summary--warn' : ''}" data-act="expand">${dpEsc(dpSummaryText(t))}</div>
         <button type="button" class="doors-type__del" data-act="del">✕</button>
       </div>
+      <div class="doors-type__warn" data-warn style="display:${dpWarnDisplay(t)}">${dpEsc(doorTypeWarningText(t))}</div>
       <div class="doors-type__body" style="display:${t.expanded ? 'block' : 'none'};">
-        <div class="doors-type__dims-label">Altura × Largura × Espessura (aduela)</div>
+        <div class="doors-type__dims-label">Altura × Largura × Espessura da parede</div>
         <div class="doors-row3">
-          <input type="number" class="order-field t-altura" placeholder="Altura mm" value="${t.altura}">
-          <input type="number" class="order-field t-largura" placeholder="Largura mm" value="${t.largura}">
-          <input type="number" class="order-field t-espessura" placeholder="Espessura mm" value="${t.espessura}">
+          <input type="number" min="0" class="order-field t-altura" placeholder="Altura mm" value="${t.altura}">
+          <input type="number" min="0" class="order-field t-largura" placeholder="Largura mm" value="${t.largura}">
+          <input type="number" min="0" class="order-field t-espessura" placeholder="Espessura da parede (mm)" value="${t.espessura}">
         </div>
 
         <select class="order-field t-material">
@@ -141,18 +145,20 @@ function renderTypesList() {
 
         <div class="doors-type__sub-label">Guarnição</div>
         <div class="doors-row2">
-          <input type="number" class="order-field t-g-largo" placeholder="Perfil largo (mm)" value="${t.gLargo}">
-          <input type="number" class="order-field t-g-fino" placeholder="Perfil fino (mm)" value="${t.gFino}">
+          <input type="number" min="0" class="order-field t-g-largo" placeholder="Perfil largo (mm)" value="${t.gLargo}">
+          <input type="number" min="0" class="order-field t-g-fino" placeholder="Perfil fino (mm)" value="${t.gFino}">
         </div>
 
-        <label class="doors-checkbox">
-          <input type="checkbox" class="t-vidro" ${t.vidro?'checked':''}>
-          <span>Tem vidro</span>
-        </label>
-        <select class="order-field t-bite-stock" style="display:${t.vidro?'block':'none'};">
-          <option value="1830" ${t.biteStock==='1830'?'selected':''}>Bite stock 1830mm — 6 peças</option>
-          <option value="2750" ${t.biteStock==='2750'?'selected':''}>Bite stock 2750mm — 4 peças</option>
-        </select>
+        <div class="doors-type__glass-group" style="display:${t.tipo === 'passagem' ? 'none' : ''}">
+          <label class="doors-checkbox">
+            <input type="checkbox" class="t-vidro" ${t.vidro?'checked':''}>
+            <span>Tem vidro</span>
+          </label>
+          <select class="order-field t-bite-stock" style="display:${t.vidro?'block':'none'};">
+            <option value="1830" ${t.biteStock==='1830'?'selected':''}>Bite stock 1830mm — 6 peças</option>
+            <option value="2750" ${t.biteStock==='2750'?'selected':''}>Bite stock 2750mm — 4 peças</option>
+          </select>
+        </div>
 
         <div class="doors-row2">
           <select class="order-field t-abertura">
@@ -193,12 +199,12 @@ function renderTypesList() {
     const body = el.querySelector('.doors-type__body');
     if (!body) return;
 
-    body.querySelector('.t-altura').addEventListener('input', e => { t.altura = e.target.value; syncSummary(el, t); renderDoorsAll(); });
-    body.querySelector('.t-largura').addEventListener('input', e => { t.largura = e.target.value; syncSummary(el, t); renderDoorsAll(); });
-    body.querySelector('.t-espessura').addEventListener('input', e => { t.espessura = e.target.value; syncSummary(el, t); renderDoorsAll(); });
+    body.querySelector('.t-altura').addEventListener('input', e => { t.altura = dpClampInput(e.target); syncSummary(el, t); renderDoorsAll(); });
+    body.querySelector('.t-largura').addEventListener('input', e => { t.largura = dpClampInput(e.target); syncSummary(el, t); renderDoorsAll(); });
+    body.querySelector('.t-espessura').addEventListener('input', e => { t.espessura = dpClampInput(e.target); syncSummary(el, t); renderDoorsAll(); });
     body.querySelector('.t-material').addEventListener('change', e => { t.material = e.target.value; syncSummary(el, t); renderDoorsAll(); });
-    body.querySelector('.t-g-largo').addEventListener('input', e => { t.gLargo = e.target.value; renderDoorsAll(); });
-    body.querySelector('.t-g-fino').addEventListener('input', e => { t.gFino = e.target.value; renderDoorsAll(); });
+    body.querySelector('.t-g-largo').addEventListener('input', e => { t.gLargo = dpClampInput(e.target); renderDoorsAll(); });
+    body.querySelector('.t-g-fino').addEventListener('input', e => { t.gFino = dpClampInput(e.target); renderDoorsAll(); });
     body.querySelector('.t-bite-stock').addEventListener('change', e => { t.biteStock = e.target.value; renderDoorsAll(); });
     body.querySelector('.t-vidro').addEventListener('change', e => {
       t.vidro = e.target.checked;
@@ -213,6 +219,18 @@ function renderTypesList() {
     toggle.querySelectorAll('button').forEach(btn => {
       btn.addEventListener('click', () => {
         t.tipo = btn.dataset.val;
+        // "Tem vidro" / bite never apply to Passagem — hide the option and
+        // clear any stale vidro flag so the BOM never generates bite pieces
+        // for a passagem block (dpCalcType also guards this defensively).
+        const glassGroup = body.querySelector('.doors-type__glass-group');
+        if (t.tipo === 'passagem') {
+          t.vidro = false;
+          const vidroCheckbox = body.querySelector('.t-vidro');
+          if (vidroCheckbox) vidroCheckbox.checked = false;
+          const biteSelect = body.querySelector('.t-bite-stock');
+          if (biteSelect) biteSelect.style.display = 'none';
+        }
+        if (glassGroup) glassGroup.style.display = t.tipo === 'passagem' ? 'none' : '';
         toggle.querySelectorAll('button').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         syncSummary(el, t);
@@ -222,8 +240,62 @@ function renderTypesList() {
   });
 }
 
+// Clamps a numeric field input against negative values, correcting the
+// displayed value in place, and returns the value to store on the type.
+// An empty field is left empty (that's "not filled in yet", distinct from
+// zero) so the measurement-validation checks below still see it as missing.
+function dpClampInput(inputEl) {
+  const raw = inputEl.value;
+  if (raw === '') return '';
+  const n = Number(raw);
+  if (!Number.isNaN(n) && n < 0) {
+    inputEl.value = '0';
+    return '0';
+  }
+  return raw;
+}
+
+// Which measurements are missing on a door type — used both for the live
+// inline warning (always shown) and the hard block at send-time.
+function doorTypeIssues(t) {
+  const issues = [];
+  if (!t.altura) issues.push('altura');
+  if (!t.largura) issues.push('largura');
+  if (!t.espessura) issues.push('espessura da parede');
+  return issues;
+}
+
+function doorTypeWarningText(t) {
+  const issues = doorTypeIssues(t);
+  return issues.length ? `Faltam medidas: ${issues.join(', ')}` : '';
+}
+
+function dpWarnDisplay(t) {
+  return doorTypeIssues(t).length ? 'block' : 'none';
+}
+
+// Aggregates every type's missing-measurement issues into human-readable
+// messages, for the hard block applied only when actually sending an order
+// (drafts can be saved incomplete).
+function doorsValidationIssues() {
+  const messages = [];
+  dpTypes.filter(t => t.qty > 0).forEach((t, idx) => {
+    const issues = doorTypeIssues(t);
+    if (issues.length > 0) messages.push(`Tipo ${idx + 1} (${dpSummaryText(t)}): faltam ${issues.join(', ')}`);
+  });
+  return messages;
+}
+
 function syncSummary(el, t) {
-  el.querySelector('.doors-type__summary').textContent = dpSummaryText(t);
+  const issues = doorTypeIssues(t);
+  const summaryEl = el.querySelector('.doors-type__summary');
+  summaryEl.textContent = dpSummaryText(t);
+  summaryEl.classList.toggle('doors-type__summary--warn', issues.length > 0);
+  const warnEl = el.querySelector('.doors-type__warn');
+  if (warnEl) {
+    warnEl.textContent = doorTypeWarningText(t);
+    warnEl.style.display = issues.length ? 'block' : 'none';
+  }
 }
 
 function dpEsc(v) {
@@ -256,7 +328,11 @@ function dpCalcType(t) {
   const aduelaPecasUnit = t.tipo === 'dupla' ? 3 : 2.5;
   const guarnLargoUnit = 4; // laterais — sempre 4, independente do tipo
   const guarnFinoUnit = t.tipo === 'dupla' ? 2 : 1; // travessão (dupla) ou peça única (simples/passagem)
-  const biteQtyUnit = t.vidro ? (t.biteStock === '1830' ? 6 : 4) : 0;
+  // "Tem vidro" (and the bite it implies) never applies to Passagem — the
+  // UI already hides/clears the option, but this guard keeps the BOM
+  // correct even if a type carries a stale vidro flag (e.g. saved before
+  // this rule existed, or loaded from an old doorsData JSON).
+  const biteQtyUnit = (t.vidro && t.tipo !== 'passagem') ? (t.biteStock === '1830' ? 6 : 4) : 0;
   return {
     aduelaPecas: aduelaPecasUnit * t.qty,
     guarnLargo: guarnLargoUnit * t.qty,
@@ -285,7 +361,8 @@ function computeDoorsBom(types) {
   types.forEach(t => {
     const c = dpCalcType(t);
     const mat = (t.material || '').toUpperCase();
-    const vidroLabel = t.vidro ? 'VIDRO' : 'TAPADO';
+    const hasVidro = t.vidro && t.tipo !== 'passagem'; // never applies to Passagem
+    const vidroLabel = hasVidro ? 'VIDRO' : 'TAPADO';
     const duploLabel = t.tipo === 'dupla' ? 'DUPLO' : '';
     const aberturaLabel = ABERTURA_ABBREV[t.abertura] || '';
     const parentPrefix = t.tipo === 'passagem' ? 'PASSAGEM' : 'BLOCO';

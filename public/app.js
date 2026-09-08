@@ -1424,6 +1424,14 @@ function buildOrderSubmissionPayload(targetStatus) {
 
   if (isPortas) {
     if (!doorsHasContent()) { toast('Adicione pelo menos um tipo de porta', 'error'); return null; }
+    // Missing measurements are only a hard block when actually sending to
+    // armazém (can't manufacture without them) — a draft can still be
+    // saved incomplete and finished later. The live inline warning in the
+    // builder itself is shown regardless of targetStatus.
+    if (targetStatus === 'Enviado') {
+      const issues = doorsValidationIssues();
+      if (issues.length > 0) { toast(`Faltam medidas para enviar — ${issues.join(' | ')}`, 'error'); return null; }
+    }
     const { lines: doorLines, doorsData } = getDoorsOrderPayload();
     if (doorLines.length === 0) { toast('Preencha as medidas para gerar os materiais', 'error'); return null; }
     const extraLines = orderState.newOrderLines.map(line => ({ ...line, qtyOrdered: baseQty(line) }));
