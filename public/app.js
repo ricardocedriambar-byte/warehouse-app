@@ -107,7 +107,11 @@ async function showLoginScreen() {
         renderOrdersList();
         loadAllItems();
         ensurePushPermissionPrompt();
-        if (user.defaultTab && $(`.tabbar__btn[data-goto="${user.defaultTab}"]`)) {
+        // A notification tap that required logging in first (cold start) —
+        // send them straight to what it was about instead of the default
+        // tab, which is what they'd expect from tapping it in the first place.
+        const wentToPushTarget = await applyPendingPushTarget();
+        if (!wentToPushTarget && user.defaultTab && $(`.tabbar__btn[data-goto="${user.defaultTab}"]`)) {
           $(`.tabbar__btn[data-goto="${user.defaultTab}"]`).click();
         }
       });
@@ -235,6 +239,58 @@ function ensurePushPermissionPrompt() {
   if (localStorage.getItem(askedKey)) return;
 
   showPushPermissionOverlay();
+}
+
+// ─── Notification deep-linking ──────────────────────────────────────────
+// The app has no URL-based view routing (every screen lives at "/"), so
+// the server encodes the target as a "kind:id" string in a "?push=" query
+// param (e.g. "/?push=order:ENC-20260908-1001" or "/?push=item:01100101")
+// instead of a real path — see the `url` field built in
+// lib/stockAlerts.js/api/notify-order.js and carried through by
+// public/sw.js's push/notificationclick handlers.
+//
+// Two delivery paths land here:
+//   - Cold start (no app window open when the notification was tapped):
+//     the service worker opens "/?push=...", and applyPendingPushTarget()
+//     below reads it from location.search once login/data-loading finishes.
+//   - App already open: focusing an existing window doesn't reload it (so
+//     it never sees the query string), so the service worker also
+//     postMessages the target — handled by the listener registered in
+//     init() — and we navigate in place instead.
+async function navigateToPushTargetString(pushStr) {
+  if (!pushStr || !auth.user) return false;
+  const [kind, id] = pushStr.split(':');
+
+  if (kind === 'order' && id) {
+    if (!orderState.orders || orderState.orders.length === 0) await loadOrders({ silent: true });
+    const order = orderState.orders.find(o => o.orderId === id);
+    if (order) openOrderDetail(id);
+    else toast(`Encomenda ${id} não encontrada (pode já ter sido processada)`, 'error');
+    return true;
+  }
+
+  if (kind === 'item' && id) {
+    if (!state.items || state.items.length === 0) await loadAllItems();
+    const item = state.items.find(i => i.sku === id);
+    if (item) { setView('item'); renderItemDetail(item); }
+    else toast(`Artigo ${id} não encontrado`, 'error');
+    return true;
+  }
+
+  return false;
+}
+
+// Reads a pending "?push=..." target left in the URL by a cold-start
+// notification tap. Clears it from the URL immediately either way, so it
+// doesn't linger through later setView() history entries (those push an
+// empty '' URL, which — per the History API — keeps whatever query string
+// is already there) or get replayed on a page refresh.
+async function applyPendingPushTarget() {
+  const push = new URLSearchParams(location.search).get('push');
+  if (!push) return false;
+  history.replaceState(null, '', location.pathname);
+  if (!auth.user) return false;
+  return navigateToPushTargetString(push);
 }
 
 function applyRoleRestrictions() {
@@ -2682,7 +2738,10 @@ function init() {
     applyRoleRestrictions();
     loadItemsFromCache();
     loadAllItems();
-    loadOrders({ silent: true }).then(() => renderOrdersList());
+    loadOrders({ silent: true }).then(() => {
+      renderOrdersList();
+      applyPendingPushTarget();
+    });
     ensurePushPermissionPrompt();
   } else {
     showLoginScreen();
@@ -2695,6 +2754,19 @@ function init() {
   // Service worker
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('/sw.js').catch(err => console.error('SW:', err));
+    // A notification tap while the app is already open focuses the
+    // existing window instead of reloading it, so it never sees the
+    // "?push=..." query string the service worker opened/navigated to —
+    // it posts the target here instead. See notificationclick in sw.js.
+    navigator.serviceWorker.addEventListener('message', (event) => {
+      if (event.data?.type !== 'push-navigate' || !event.data.url) return;
+      try {
+        const push = new URL(event.data.url, location.origin).searchParams.get('push');
+        navigateToPushTargetString(push);
+      } catch (err) {
+        console.error('push navigate failed:', err);
+      }
+    });
   }
 
   // Background stock refresh — picks made by OTHER people (e.g. Bruno in

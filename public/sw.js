@@ -65,9 +65,11 @@ self.addEventListener('fetch', (event) => {
 
 // ─── Web Push ──────────────────────────────────────────────────────────
 // The server (lib/push.js) sends a JSON payload like
-// { title, body, tag }. Low-stock alerts and order-sent notifications
+// { title, body, tag, url }. Low-stock alerts and order-sent notifications
 // both go through this same handler — there's nothing order/SKU-specific
-// to branch on here, just show it.
+// to branch on here, just show it. `url` (e.g. "/?push=order:ENC-123" or
+// "/?push=item:01100101") is carried through as notification data so
+// notificationclick below can send the app straight there.
 self.addEventListener('push', (event) => {
   let data = {};
   try { data = event.data ? event.data.json() : {}; } catch { data = {}; }
@@ -77,23 +79,35 @@ self.addEventListener('push', (event) => {
     body: data.body || '',
     tag: data.tag || undefined,
     icon: '/icons/icon-192.png',
-    badge: '/icons/icon-192.png'
+    badge: '/icons/icon-192.png',
+    data: { url: data.url || '/' }
   };
 
   event.waitUntil(self.registration.showNotification(title, options));
 });
 
-// The app has no URL-based view routing (every screen lives at "/"), so a
-// notification click can only open/focus the app's one window — it can't
-// deep-link to the specific order or item that triggered it.
+// The app has no URL-based view routing (every screen lives at "/"), so
+// deep-linking works by carrying a "?push=order:ID" / "?push=item:SKU"
+// query string instead of a real path:
+//   - No app window open yet: openWindow(targetUrl) — app.js reads
+//     location.search on boot (applyPendingPushTarget) and navigates once
+//     login/data-loading finishes.
+//   - A window is already open: focusing it doesn't reload the page (so
+//     the query string would never be read), so we also postMessage the
+//     target and app.js's message listener navigates in place.
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
+  const targetUrl = (event.notification.data && event.notification.data.url) || '/';
+
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientsList) => {
       for (const client of clientsList) {
-        if ('focus' in client) return client.focus();
+        if ('focus' in client) {
+          client.postMessage({ type: 'push-navigate', url: targetUrl });
+          return client.focus();
+        }
       }
-      if (self.clients.openWindow) return self.clients.openWindow('/');
+      if (self.clients.openWindow) return self.clients.openWindow(targetUrl);
     })
   );
 });
