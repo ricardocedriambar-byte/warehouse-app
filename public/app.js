@@ -1182,35 +1182,60 @@ function baseQty(line) {
   return line.qtyOrdered || 0;
 }
 
+// STOCK/RESERVADO/DISPONÍVEL are always counted in physical pieces ("un"),
+// same convention as lib/orders.js's toPieces() and api/pick-line.js's
+// piecesPicked — but an order line's qtyOrdered is in the item's *pricing*
+// unit (e.g. m²) once baseQty() has run. Comparing those two numbers
+// directly — as this used to do — compares apples to oranges: a request
+// for 29,925 m² was being weighed against "24" when 24 actually meant 24
+// whole panels (≈143 m² at 5,985 m²/panel), so a perfectly fine order got
+// flagged as short. Converting the requested quantity back to pieces here
+// is what stockWarningText/findInsufficientStockLines below actually need
+// to compare against item.disponivel.
+function toPiecesQty(item, qtyInPricingUnit) {
+  return (item.unidade && item.unidade !== 'un' && item.dimensaoM2)
+    ? qtyInPricingUnit / item.dimensaoM2
+    : qtyInPricingUnit;
+}
+
 // Looks the line's SKU up in the loaded catalog and, if it tracks stock
-// and the requested (base-unit) quantity exceeds what's currently
-// available, returns a short warning string — otherwise ''. Used both for
-// the live inline hint while building an order and for the pre-send
-// shortage summary in findInsufficientStockLines below.
+// and the requested quantity (converted to physical pieces) exceeds what's
+// currently available, returns a short warning string — otherwise ''. Used
+// both for the live inline hint while building an order and for the
+// pre-send shortage summary in findInsufficientStockLines below.
 function stockWarningText(line) {
   const item = state.items.find(i => i.sku === line.sku);
   if (!item || item.disponivel === null || item.disponivel === undefined) return '';
-  const requested = baseQty(line);
-  if (requested <= item.disponivel) return '';
+  const requestedPieces = toPiecesQty(item, baseQty(line));
+  if (requestedPieces <= item.disponivel) return '';
+  const hasConversion = item.unidade && item.unidade !== 'un' && !!item.dimensaoM2;
+  if (hasConversion) {
+    const availablePricing = item.disponivel * item.dimensaoM2;
+    return `Apenas ${fmtNumber(item.disponivel)} un (${fmtNumber(availablePricing, 2)} ${item.unidade}) disponíveis`;
+  }
   return `Apenas ${fmtNumber(item.disponivel)} ${item.unidade || line.unidade || 'un'} disponíveis`;
 }
 
 // Same check as stockWarningText, run across a whole payload/order's lines
-// (qtyOrdered already in the item's base unit at this point) — used right
-// before an order is actually sent to the warehouse, since that's the
-// moment reservation kicks in and it's too late to notice quietly.
+// (qtyOrdered already in the item's pricing unit at this point, same as
+// what gets written to the sheet) — used right before an order is actually
+// sent to the warehouse, since that's the moment reservation kicks in and
+// it's too late to notice quietly.
 function findInsufficientStockLines(lines) {
   const shortages = [];
   for (const line of lines || []) {
     const item = state.items.find(i => i.sku === line.sku);
     if (!item || item.disponivel === null || item.disponivel === undefined) continue;
-    if ((line.qtyOrdered || 0) > item.disponivel) {
+    const requestedPieces = toPiecesQty(item, line.qtyOrdered || 0);
+    if (requestedPieces > item.disponivel) {
+      const hasConversion = item.unidade && item.unidade !== 'un' && !!item.dimensaoM2;
       shortages.push({
         sku: line.sku,
         descricao: item.descricao || line.descricao || '',
         requested: line.qtyOrdered || 0,
+        unidade: item.unidade || line.unidade || 'un',
         available: item.disponivel,
-        unidade: item.unidade || line.unidade || 'un'
+        availablePricing: hasConversion ? item.disponivel * item.dimensaoM2 : null
       });
     }
   }
@@ -1847,7 +1872,7 @@ function showSendPreviewOverlay(pdfBytes, onConfirm, shortages = [], labels = {}
     <div class="stock-warning-banner">
       <div class="stock-warning-banner__title">⚠ Stock insuficiente para ${shortages.length} artigo${shortages.length !== 1 ? 's' : ''}</div>
       <ul class="stock-warning-banner__list">
-        ${shortages.map(s => `<li>${s.sku} — ${s.descricao}: pede ${fmtNumber(s.requested)} ${s.unidade}, há ${fmtNumber(s.available)} disponível</li>`).join('')}
+        ${shortages.map(s => `<li>${s.sku} — ${s.descricao}: pede ${fmtNumber(s.requested)} ${s.unidade}, há ${fmtNumber(s.available)} un${s.availablePricing !== null ? ` (${fmtNumber(s.availablePricing, 2)} ${s.unidade})` : ''} disponível</li>`).join('')}
       </ul>
     </div>` : '';
   overlay.innerHTML = `
