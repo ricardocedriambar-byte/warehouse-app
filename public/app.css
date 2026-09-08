@@ -1681,6 +1681,12 @@ table.doors-doc__table tr:nth-child(even) td { background: #faf6ec; }
 .settings-profile__name { font-size: 16px; font-weight: 600; color: var(--t1); }
 .settings-profile__role { font-size: 12px; color: var(--t3); margin-top: 2px; }
 
+.settings-hint {
+  font-size: 12px; line-height: 1.5; color: var(--t3);
+  margin: var(--sp-3) 0 0; padding-top: var(--sp-3);
+  border-top: 1px solid var(--b1);
+}
+
 .toggle-row {
   display: flex; align-items: center; justify-content: space-between;
   gap: var(--sp-3);

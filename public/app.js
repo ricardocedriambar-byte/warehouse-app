@@ -2295,7 +2295,7 @@ function renderSettingsForm(panel, u) {
       <input class="order-field" id="settings-email" type="email" placeholder="email para notificações" value="${u.email || ''}" style="margin-bottom:0" />
     </div>
 
-    <div class="section-label">Notificações por email</div>
+    <div class="section-label">Notificações</div>
     <div class="settings-card">
       <label class="toggle-row">
         <span>Novas encomendas enviadas</span>
@@ -2307,6 +2307,7 @@ function renderSettingsForm(panel, u) {
         <input type="checkbox" id="settings-notify-lowstock" ${u.notifyLowStock ? 'checked' : ''} />
         <span class="toggle-switch"></span>
       </label>
+      <p class="settings-hint">Recebidas como notificação push neste dispositivo (e por email, no caso de encomendas). Também é preciso ativar as notificações do browser — se ainda não o fizeste, sai e volta a entrar para veres esse pedido.</p>
     </div>
 
     <div class="section-label">Ecrã inicial ao entrar</div>
