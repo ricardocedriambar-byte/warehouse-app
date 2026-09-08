@@ -13,6 +13,7 @@ let dpTypes = [];      // [{ id, qty, expanded, tipo, altura, largura, espessura
 let dpTypeSeq = 0;
 let dpMaterials = [];  // material/finish names, from the MateriaisPortas sheet tab
 let dpMounted = false;
+let dpSeedMeta = null; // { obra, dataFicha, obsGerais } queued by seedDoorsBuilder, applied on the next mount then cleared
 
 // Clears all door-type state — called each time "Nova Encomenda" opens,
 // so a previous Portas order's data never bleeds into a new one.
@@ -20,6 +21,24 @@ function resetDoorsBuilder() {
   dpTypes = [];
   dpTypeSeq = 0;
   dpMounted = false;
+  dpSeedMeta = null;
+}
+
+// Pre-loads the builder with an existing order's doorsData — used when
+// reopening an already-created Portas order for editing, so the person
+// sees exactly what was submitted instead of a blank form. Call this
+// AFTER resetDoorsBuilder() and BEFORE the next renderDoorsBuilder(); the
+// obra/data/observações fields are applied once that render happens; each
+// type object is a fresh copy so editing here never mutates the original
+// order data still held elsewhere (e.g. the order-pick view behind it).
+function seedDoorsBuilder(doorsData) {
+  dpTypes = (doorsData.types || []).map(t => ({ ...t }));
+  dpTypeSeq = dpTypes.reduce((max, t) => Math.max(max, Number(t.id) || 0), 0);
+  dpSeedMeta = {
+    obra: doorsData.obra || '',
+    dataFicha: doorsData.dataFicha || '',
+    obsGerais: doorsData.obsGerais || ''
+  };
 }
 
 // Mounts the builder UI into `container` (a div living inside the
@@ -56,7 +75,15 @@ function renderDoorsBuilder(container) {
   document.getElementById('dp-add-type').addEventListener('click', () => addDoorType(true));
 
   if (!dpMounted) {
-    document.getElementById('dp-data').valueAsDate = new Date();
+    if (dpSeedMeta) {
+      document.getElementById('dp-obra').value = dpSeedMeta.obra;
+      document.getElementById('dp-data').value = dpSeedMeta.dataFicha;
+      document.getElementById('dp-obs-gerais').value = dpSeedMeta.obsGerais;
+      dpSeedMeta = null;
+      renderTypesList();
+    } else {
+      document.getElementById('dp-data').valueAsDate = new Date();
+    }
     if (dpTypes.length === 0) addDoorType(true);
     dpMounted = true;
   } else {
@@ -160,15 +187,17 @@ function renderTypesList() {
           </select>
         </div>
 
-        <div class="doors-row2">
-          <select class="order-field t-abertura">
-            <option value="">Abertura —</option>
-            <option value="Esquerda" ${t.abertura==='Esquerda'?'selected':''}>Esquerda</option>
-            <option value="Direita" ${t.abertura==='Direita'?'selected':''}>Direita</option>
-            <option value="Dupla" ${t.abertura==='Dupla'?'selected':''}>Dupla</option>
-            <option value="Correr" ${t.abertura==='Correr'?'selected':''}>De correr</option>
-          </select>
-          <input type="text" class="order-field t-fechadura" placeholder="Fechadura" value="${dpEsc(t.fechadura)}">
+        <div class="doors-type__opening-group" style="display:${t.tipo === 'passagem' ? 'none' : ''}">
+          <div class="doors-row2">
+            <select class="order-field t-abertura">
+              <option value="">Abertura —</option>
+              <option value="Esquerda" ${t.abertura==='Esquerda'?'selected':''}>Esquerda</option>
+              <option value="Direita" ${t.abertura==='Direita'?'selected':''}>Direita</option>
+              <option value="Dupla" ${t.abertura==='Dupla'?'selected':''}>Dupla</option>
+              <option value="Correr" ${t.abertura==='Correr'?'selected':''}>De correr</option>
+            </select>
+            <input type="text" class="order-field t-fechadura" placeholder="Fechadura" value="${dpEsc(t.fechadura)}">
+          </div>
         </div>
         <textarea class="order-field t-obs doors-textarea" placeholder="Observações">${dpEsc(t.obs)}</textarea>
       </div>
@@ -219,18 +248,29 @@ function renderTypesList() {
     toggle.querySelectorAll('button').forEach(btn => {
       btn.addEventListener('click', () => {
         t.tipo = btn.dataset.val;
-        // "Tem vidro" / bite never apply to Passagem — hide the option and
-        // clear any stale vidro flag so the BOM never generates bite pieces
-        // for a passagem block (dpCalcType also guards this defensively).
+        // Vidro/bite AND Abertura/Fechadura never apply to Passagem (no
+        // door leaf to glaze, open, or lock) — hide both option groups and
+        // clear any stale values so the BOM/ficha never carries them over
+        // for a passagem block (dpCalcType/computeDoorsBom also guard this
+        // defensively for older saved data).
         const glassGroup = body.querySelector('.doors-type__glass-group');
+        const openingGroup = body.querySelector('.doors-type__opening-group');
         if (t.tipo === 'passagem') {
           t.vidro = false;
           const vidroCheckbox = body.querySelector('.t-vidro');
           if (vidroCheckbox) vidroCheckbox.checked = false;
           const biteSelect = body.querySelector('.t-bite-stock');
           if (biteSelect) biteSelect.style.display = 'none';
+
+          t.abertura = '';
+          t.fechadura = '';
+          const aberturaSelect = body.querySelector('.t-abertura');
+          if (aberturaSelect) aberturaSelect.value = '';
+          const fechaduraInput = body.querySelector('.t-fechadura');
+          if (fechaduraInput) fechaduraInput.value = '';
         }
         if (glassGroup) glassGroup.style.display = t.tipo === 'passagem' ? 'none' : '';
+        if (openingGroup) openingGroup.style.display = t.tipo === 'passagem' ? 'none' : '';
         toggle.querySelectorAll('button').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         syncSummary(el, t);
@@ -262,6 +302,7 @@ function doorTypeIssues(t) {
   if (!t.altura) issues.push('altura');
   if (!t.largura) issues.push('largura');
   if (!t.espessura) issues.push('espessura da parede');
+  if (!t.material) issues.push('material');
   return issues;
 }
 
@@ -332,7 +373,11 @@ function dpCalcType(t) {
   // UI already hides/clears the option, but this guard keeps the BOM
   // correct even if a type carries a stale vidro flag (e.g. saved before
   // this rule existed, or loaded from an old doorsData JSON).
-  const biteQtyUnit = (t.vidro && t.tipo !== 'passagem') ? (t.biteStock === '1830' ? 6 : 4) : 0;
+  // Dupla has 2 leaves, so a glazed Dupla needs double the bite pieces of
+  // a glazed Simples — the piece count doubles, the stock-size choice
+  // (1830/2750) does not.
+  const biteMultiplier = t.tipo === 'dupla' ? 2 : 1;
+  const biteQtyUnit = (t.vidro && t.tipo !== 'passagem') ? (t.biteStock === '1830' ? 6 : 4) * biteMultiplier : 0;
   return {
     aduelaPecas: aduelaPecasUnit * t.qty,
     guarnLargo: guarnLargoUnit * t.qty,
@@ -364,7 +409,9 @@ function computeDoorsBom(types) {
     const hasVidro = t.vidro && t.tipo !== 'passagem'; // never applies to Passagem
     const vidroLabel = hasVidro ? 'VIDRO' : 'TAPADO';
     const duploLabel = t.tipo === 'dupla' ? 'DUPLO' : '';
-    const aberturaLabel = ABERTURA_ABBREV[t.abertura] || '';
+    // Abertura never applies to Passagem — same defensive guard as vidro,
+    // in case a type carries a stale value from before this rule existed.
+    const aberturaLabel = t.tipo === 'passagem' ? '' : (ABERTURA_ABBREV[t.abertura] || '');
     const parentPrefix = t.tipo === 'passagem' ? 'PASSAGEM' : 'BLOCO';
     // "DUPLO" comes from the door's actual tipo (simples/dupla/passagem),
     // never from the separate abertura dropdown (Esquerda/Direita/Dupla/

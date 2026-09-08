@@ -850,6 +850,21 @@ input[type=number] { -moz-appearance: textfield; }
 .order-field:focus { border-color: var(--b3); background: var(--s3); }
 select.order-field { padding: 12px var(--sp-4); }
 
+/* Locked read-only fields shown in place of an editable control while
+   correcting an existing order (client / order type can't change) */
+.order-field-locked {
+  width: 100%; background: var(--s2); border: 1px solid var(--b1);
+  color: var(--t2); border-radius: var(--r-md); padding: 13px var(--sp-4);
+  font-size: 15px; box-sizing: border-box;
+}
+
+.order-edit-banner {
+  background: var(--warning-bg, rgba(200,136,60,0.12)); color: var(--warning);
+  border: 1px solid var(--warning); border-radius: var(--r-md);
+  padding: var(--sp-2) var(--sp-3); font-size: 13px; font-weight: 600;
+  margin-bottom: var(--sp-3);
+}
+
 /* Client search */
 .client-search-wrap { position: relative; }
 .client-search-results {
@@ -1057,6 +1072,7 @@ select.order-field { padding: 12px var(--sp-4); }
 .order-pick__header { margin-bottom: var(--sp-4); }
 .order-pick__id { font-family: var(--mono); font-size: 11px; color: var(--accent); margin-bottom: 2px; }
 .order-pick__client { font-size: 22px; font-weight: 700; letter-spacing: -0.3px; }
+.order-pick__edited-note { font-size: 11px; color: var(--t3); font-style: italic; margin-top: 4px; }
 .order-pick__progress-row {
   display: flex; justify-content: space-between; align-items: center; margin-top: var(--sp-3);
 }

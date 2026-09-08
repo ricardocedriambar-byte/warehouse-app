@@ -145,6 +145,7 @@ const orderState = {
   newOrderLines: [],
   newOrderClient: null,
   newOrderType: 'Normal',
+  editingOrder: null, // set while renderOrderCreate() is reopened to correct an existing order
   filterActive: true,
   loaded: false, // true once loadOrders() has resolved at least once — lets
                  // the Home view tell "still loading" apart from "genuinely zero"
@@ -231,6 +232,12 @@ function fmtNumber(n, decimals = 2) {
 function fmtCurrency(n) {
   if (n === null || n === undefined || Number.isNaN(n)) return '—';
   return n.toLocaleString('pt-PT', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
+}
+function fmtDateTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleString('pt-PT', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
 // Shimmering row placeholders shown in place of plain "A carregar…" text
@@ -856,42 +863,72 @@ async function openOrderDetail(orderId) {
 // ═══════════════════════════════════════════════════════════
 // ORDER CREATE
 // ═══════════════════════════════════════════════════════════
-function renderOrderCreate() {
-  orderState.newOrderLines  = [];
-  orderState.newOrderClient = null;
-  orderState.newOrderType   = 'Normal';
+// `existingOrder` (optional) switches this into edit mode: it reopens an
+// already-created Rascunho/Enviado order for correction instead of
+// starting a blank one. Client and order type are locked in that mode —
+// only the ficha/materials/notes can change — see buildOrderEditPayload.
+function renderOrderCreate(existingOrder = null) {
+  orderState.editingOrder = existingOrder || null;
+  const isEditing = !!existingOrder;
+
+  orderState.newOrderLines = isEditing
+    ? existingOrder.lines.filter(l => !/^PORTA-/.test(l.sku)).map(l => {
+        // Reconstructed from the order's own saved lines (real catalog
+        // SKUs only — the door BOM lines are regenerated fresh from
+        // doorsData, never edited as raw lines). qtyMode is pinned to the
+        // line's own unit (not 'un') so baseQty() reads qtyOrdered as-is —
+        // it's already stored in the pricing unit, and the order line
+        // itself doesn't carry dimensaoM2 to safely convert back.
+        const catalogItem = state.items.find(i => i.sku === l.sku);
+        return { ...l, qtyMode: l.unidade || 'un', dimensaoM2: catalogItem ? catalogItem.dimensaoM2 : null };
+      })
+    : [];
+  orderState.newOrderClient = isEditing
+    ? (orderState.clients.find(c => c.id === existingOrder.clientId) || { id: existingOrder.clientId, name: existingOrder.clientName })
+    : null;
+  orderState.newOrderType = isEditing ? (existingOrder.orderType || 'Normal') : 'Normal';
   resetDoorsBuilder();
+  if (isEditing && orderState.newOrderType === 'Portas' && existingOrder.doorsData) {
+    seedDoorsBuilder(existingOrder.doorsData);
+  }
 
   const panel = $('#order-create-panel');
   if (!panel) return;
 
+  const isPortas = orderState.newOrderType === 'Portas';
+
   panel.innerHTML = `
-    <button class="back-btn" id="create-back-btn">‹ Encomendas</button>
+    <button class="back-btn" id="create-back-btn">‹ ${isEditing ? 'Voltar' : 'Encomendas'}</button>
     <div class="order-create">
+      ${isEditing ? `<div class="order-edit-banner">A editar ${existingOrder.orderId} · ${existingOrder.status}</div>` : ''}
 
       <div class="order-create__section">
         <div class="section-label">Tipo de encomenda</div>
-        <div class="doors-tipo-toggle" id="order-type-toggle">
-          <button type="button" data-val="Normal" class="active">Normal</button>
-          <button type="button" data-val="Portas">Portas</button>
-        </div>
+        ${isEditing
+          ? `<div class="order-field-locked">${isPortas ? 'Portas' : 'Normal'}</div>`
+          : `<div class="doors-tipo-toggle" id="order-type-toggle">
+               <button type="button" data-val="Normal" class="active">Normal</button>
+               <button type="button" data-val="Portas">Portas</button>
+             </div>`}
       </div>
 
       <div class="order-create__section">
         <div class="section-label">Cliente</div>
-        <div class="client-search-wrap">
-          <input class="order-field" id="client-search-input" type="text"
-            placeholder="Pesquisar cliente…" autocomplete="off" style="margin:0" />
-          <div class="client-search-results" id="client-search-results" style="display:none"></div>
-          <div class="client-selected" id="client-selected" style="display:none"></div>
-        </div>
-        <div style="margin-top:8px">
-          <button class="add-item-btn" id="new-client-btn">+ Novo cliente</button>
-        </div>
+        ${isEditing
+          ? `<div class="order-field-locked">${dpEsc(orderState.newOrderClient?.name || existingOrder.clientName)}</div>`
+          : `<div class="client-search-wrap">
+               <input class="order-field" id="client-search-input" type="text"
+                 placeholder="Pesquisar cliente…" autocomplete="off" style="margin:0" />
+               <div class="client-search-results" id="client-search-results" style="display:none"></div>
+               <div class="client-selected" id="client-selected" style="display:none"></div>
+             </div>
+             <div style="margin-top:8px">
+               <button class="add-item-btn" id="new-client-btn">+ Novo cliente</button>
+             </div>`}
       </div>
 
       <div class="order-create__section" id="order-lines-section">
-        <div class="section-label" id="order-lines-label">Artigos</div>
+        <div class="section-label" id="order-lines-label">${isPortas ? 'Outros materiais (placas, ferragens, etc.)' : 'Artigos'}</div>
         <div class="order-lines" id="order-lines-list"></div>
         <button class="add-item-btn" id="add-item-btn">
           <svg viewBox="0 0 24 24" width="16" height="16"><path d="M12 5v14m-7-7h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>
@@ -899,7 +936,7 @@ function renderOrderCreate() {
         </button>
       </div>
 
-      <div class="order-create__section" id="order-doors-section" style="display:none">
+      <div class="order-create__section" id="order-doors-section" style="display:${isPortas ? '' : 'none'}">
         <div class="section-label">Portas</div>
         <div id="dp-embed-root"></div>
       </div>
@@ -907,38 +944,49 @@ function renderOrderCreate() {
       <div class="order-create__section">
         <div class="section-label">Notas</div>
         <textarea class="order-field" id="order-notes-input" rows="3"
-          placeholder="Notas opcionais…" style="resize:none"></textarea>
+          placeholder="Notas opcionais…" style="resize:none">${dpEsc(existingOrder?.orderNotes || '')}</textarea>
       </div>
 
       <div class="order-actions">
-        <button class="order-action-btn order-action-btn--draft" id="save-draft-btn">Rascunho</button>
-        <button class="order-action-btn order-action-btn--send" id="send-order-btn">Enviar para armazém</button>
+        ${isEditing
+          ? `<button class="order-action-btn order-action-btn--send" id="save-edit-btn" style="flex:1">Guardar alterações</button>`
+          : `<button class="order-action-btn order-action-btn--draft" id="save-draft-btn">Rascunho</button>
+             <button class="order-action-btn order-action-btn--send" id="send-order-btn">Enviar para armazém</button>`}
       </div>
     </div>`;
 
-  panel.querySelector('#create-back-btn').addEventListener('click', () => setView('orders'));
-  panel.querySelector('#add-item-btn').addEventListener('click', () => showItemSearchOverlay());
-  panel.querySelector('#new-client-btn').addEventListener('click', () => showNewClientForm());
-  panel.querySelector('#save-draft-btn').addEventListener('click', () => submitOrder('Rascunho'));
-  panel.querySelector('#send-order-btn').addEventListener('click', () => confirmAndSendOrder());
-
-  const typeToggle = panel.querySelector('#order-type-toggle');
-  typeToggle.querySelectorAll('button').forEach(btn => {
-    btn.addEventListener('click', () => {
-      orderState.newOrderType = btn.dataset.val;
-      typeToggle.querySelectorAll('button').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-
-      const isPortas = orderState.newOrderType === 'Portas';
-      // Both sections stay visible in Portas mode — a door order can also
-      // need panels, hardware, etc. from the normal catalog.
-      panel.querySelector('#order-lines-label').textContent = isPortas ? 'Outros materiais (placas, ferragens, etc.)' : 'Artigos';
-      panel.querySelector('#order-doors-section').style.display = isPortas ? '' : 'none';
-      if (isPortas) renderDoorsBuilder(panel.querySelector('#dp-embed-root'));
-    });
+  panel.querySelector('#create-back-btn').addEventListener('click', () => {
+    if (isEditing) { openOrderDetail(existingOrder.orderId); } else { setView('orders'); }
   });
+  panel.querySelector('#add-item-btn').addEventListener('click', () => showItemSearchOverlay());
 
-  wireClientSearch(panel);
+  if (isEditing) {
+    panel.querySelector('#save-edit-btn').addEventListener('click', () => confirmAndSaveOrderEdit());
+  } else {
+    panel.querySelector('#new-client-btn').addEventListener('click', () => showNewClientForm());
+    panel.querySelector('#save-draft-btn').addEventListener('click', () => submitOrder('Rascunho'));
+    panel.querySelector('#send-order-btn').addEventListener('click', () => confirmAndSendOrder());
+
+    const typeToggle = panel.querySelector('#order-type-toggle');
+    typeToggle.querySelectorAll('button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        orderState.newOrderType = btn.dataset.val;
+        typeToggle.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+
+        const isPortasNow = orderState.newOrderType === 'Portas';
+        // Both sections stay visible in Portas mode — a door order can also
+        // need panels, hardware, etc. from the normal catalog.
+        panel.querySelector('#order-lines-label').textContent = isPortasNow ? 'Outros materiais (placas, ferragens, etc.)' : 'Artigos';
+        panel.querySelector('#order-doors-section').style.display = isPortasNow ? '' : 'none';
+        if (isPortasNow) renderDoorsBuilder(panel.querySelector('#dp-embed-root'));
+      });
+    });
+
+    wireClientSearch(panel);
+  }
+
+  if (isPortas) renderDoorsBuilder(panel.querySelector('#dp-embed-root'));
   renderOrderLines();
 }
 
@@ -1449,6 +1497,41 @@ function buildOrderSubmissionPayload(targetStatus) {
   };
 }
 
+// Edit-mode counterpart to buildOrderSubmissionPayload — rewrites an
+// existing Rascunho/Enviado order's content instead of creating a new
+// one. Client, order type and salesperson are locked (carried over from
+// the original order, not resubmitted), so this only needs to gather
+// notes/lines/doorsData. Measurements are only a hard block here when the
+// order is already Enviado — an edited Rascunho can still be saved
+// incomplete, exactly like a freshly created one.
+function buildOrderEditPayload() {
+  const editing = orderState.editingOrder;
+  if (!editing) return null;
+  const orderNotes = $('#order-notes-input')?.value.trim() || '';
+  const isPortas = editing.orderType === 'Portas';
+
+  if (isPortas) {
+    if (!doorsHasContent()) { toast('Adicione pelo menos um tipo de porta', 'error'); return null; }
+    if (editing.status === 'Enviado') {
+      const issues = doorsValidationIssues();
+      if (issues.length > 0) { toast(`Faltam medidas para guardar — ${issues.join(' | ')}`, 'error'); return null; }
+    }
+    const { lines: doorLines, doorsData } = getDoorsOrderPayload();
+    if (doorLines.length === 0) { toast('Preencha as medidas para gerar os materiais', 'error'); return null; }
+    const extraLines = orderState.newOrderLines.map(line => ({ ...line, qtyOrdered: baseQty(line) }));
+    return {
+      orderId: editing.orderId, orderNotes, orderType: 'Portas', doorsData,
+      lines: [...doorLines, ...extraLines], editedBy: auth.user?.name || ''
+    };
+  }
+  if (orderState.newOrderLines.length === 0) { toast('Adicione pelo menos um artigo', 'error'); return null; }
+  return {
+    orderId: editing.orderId, orderNotes, orderType: 'Normal',
+    lines: orderState.newOrderLines.map(line => ({ ...line, qtyOrdered: baseQty(line) })),
+    editedBy: auth.user?.name || ''
+  };
+}
+
 async function submitOrder(targetStatus) {
   const payload = buildOrderSubmissionPayload(targetStatus);
   if (!payload) return;
@@ -1523,6 +1606,71 @@ async function confirmAndSendOrder() {
   }
 }
 
+// Edit-mode counterpart to confirmAndSendOrder — same "generate the real
+// PDF, show it for a final look, only write on confirm" flow, but PATCHes
+// the existing order's content in place instead of creating a new one.
+// The order's status never changes here; if it was already Enviado, the
+// warehouse gets a fresh notification email once the edit is saved, since
+// they may already be relying on the version they were first sent.
+async function confirmAndSaveOrderEdit() {
+  const editing = orderState.editingOrder;
+  if (!editing) return;
+  const payload = buildOrderEditPayload();
+  if (!payload) return;
+
+  const client = orderState.newOrderClient;
+  const saveBtn = $('#save-edit-btn');
+  if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'A preparar pré-visualização…'; }
+
+  try {
+    const previewOrder = {
+      orderId: editing.orderId,
+      createdAt: editing.createdAt,
+      salesperson: editing.salesperson,
+      orderNotes: payload.orderNotes,
+      orderType: payload.orderType,
+      lines: payload.lines
+    };
+    const res = await fetch('/api/order-preview-pdf', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ order: previewOrder, client })
+    });
+    if (!res.ok) {
+      let detail = '';
+      try { detail = (await res.json()).error || ''; } catch {}
+      throw new Error(detail || `HTTP ${res.status}`);
+    }
+    const blob = await res.arrayBuffer();
+    showSendPreviewOverlay(
+      blob,
+      async () => {
+        try {
+          const data = await apiPatch('/api/orders', payload);
+          await loadOrders({ silent: true });
+          const updated = (data && data.order) || orderState.orders.find(o => o.orderId === editing.orderId);
+          toast('Alterações guardadas', 'success');
+          // Only an already-Enviado order needs to re-notify the warehouse
+          // — a Rascunho edit never emailed anyone in the first place.
+          if (editing.status === 'Enviado') {
+            notifyOrderByEmail({ ...(updated || editing), orderNotes: payload.orderNotes }, client);
+          }
+          orderState.editingOrder = null;
+          if (updated) { openOrderDetail(updated.orderId); } else { setView('orders'); renderOrdersList(); }
+        } catch (err) {
+          showError(err, 'Não foi possível guardar as alterações. Tente novamente.');
+        }
+      },
+      findInsufficientStockLines(payload.lines),
+      { ok: 'Guardar alterações', shortage: 'Guardar mesmo assim', progress: 'A guardar…' }
+    );
+  } catch (err) {
+    showError(err, `Não foi possível gerar a pré-visualização${err.message ? ': ' + err.message : ''}.`);
+  } finally {
+    if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Guardar alterações'; }
+  }
+}
+
 // PDF.js is loaded lazily from a CDN, only the first time a preview is
 // needed — it renders the PDF into a <canvas> ourselves instead of
 // relying on the platform's native PDF viewer, which is unreliable
@@ -1563,7 +1711,9 @@ async function renderPdfIntoCanvas(canvas, pdfBytes) {
   await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
 }
 
-function showSendPreviewOverlay(pdfBytes, onConfirm, shortages = []) {
+function showSendPreviewOverlay(pdfBytes, onConfirm, shortages = [], labels = {}) {
+  const okLabel       = labels.ok || 'Confirmar e enviar';
+  const shortageLabel = labels.shortage || 'Enviar mesmo assim';
   const overlay = document.createElement('div');
   overlay.className = 'send-preview-overlay';
   // Soft warning, not a hard block: reservation only starts once the order
@@ -1591,7 +1741,7 @@ function showSendPreviewOverlay(pdfBytes, onConfirm, shortages = []) {
     </div>
     <div class="send-preview-overlay__actions">
       <button class="order-action-btn order-action-btn--draft" id="send-preview-back">Voltar a editar</button>
-      <button class="order-action-btn order-action-btn--send" id="send-preview-confirm">${shortages.length > 0 ? 'Enviar mesmo assim' : 'Confirmar e enviar'}</button>
+      <button class="order-action-btn order-action-btn--send" id="send-preview-confirm">${shortages.length > 0 ? shortageLabel : okLabel}</button>
     </div>`;
   document.body.appendChild(overlay);
 
@@ -1608,7 +1758,7 @@ function showSendPreviewOverlay(pdfBytes, onConfirm, shortages = []) {
   overlay.querySelector('#send-preview-confirm').addEventListener('click', async () => {
     const confirmBtn = overlay.querySelector('#send-preview-confirm');
     confirmBtn.disabled = true;
-    confirmBtn.textContent = 'A enviar…';
+    confirmBtn.textContent = labels.progress || 'A enviar…';
     await onConfirm();
     cleanup();
   });
@@ -1639,6 +1789,11 @@ function renderOrderPick(order, isDraft) {
 
   const allPicked  = order.lines.every(l => l.qtyPicked >= l.qtyOrdered);
   const pickedCount = order.lines.filter(l => l.qtyPicked >= l.qtyOrdered).length;
+  // Only the ficha's own owner (or an admin) can correct it, and only
+  // while the warehouse hasn't started pulling materials for it yet —
+  // once picking begins (or it's finished/cancelled), it's frozen.
+  const canEditOrder = (order.status === 'Rascunho' || order.status === 'Enviado')
+    && (auth.user?.name === order.salesperson || auth.isAdmin());
 
   panel.innerHTML = `
     <button class="back-btn" id="pick-back-btn">‹ Encomendas</button>
@@ -1647,12 +1802,16 @@ function renderOrderPick(order, isDraft) {
         <div class="order-pick__id">${order.orderId}${order.orderType === 'Portas' ? ' <span class="order-card__type-badge">Portas</span>' : ''} · <span style="color:var(--t3)">${order.status}</span></div>
         <div class="order-pick__client">${order.clientName}</div>
         ${order.orderNotes ? `<div style="font-size:13px;color:var(--t3);margin-top:4px">${order.orderNotes}</div>` : ''}
+        ${order.editedBy ? `<div class="order-pick__edited-note">Editado por ${order.editedBy}${fmtDateTime(order.editedAt) ? ' às ' + fmtDateTime(order.editedAt) : ''}</div>` : ''}
         <div class="order-pick__progress-row">
           <span class="order-pick__progress-label">${pickedCount} de ${order.lines.length} separados</span>
           ${!isDraft && order.status === 'Enviado'
             ? `<button class="orders-filter-btn active" id="start-picking-btn">Iniciar separação</button>` : ''}
         </div>
       </div>
+
+      ${canEditOrder ? `
+        <button class="btn-ghost doors-full-btn" id="edit-order-btn" style="margin-bottom:12px">✎ Editar ficha</button>` : ''}
 
       ${isDraft ? `
         <div style="display:flex;gap:8px;margin-bottom:16px">
@@ -1727,6 +1886,15 @@ function renderOrderPick(order, isDraft) {
   panel.querySelector('#pick-back-btn').addEventListener('click', () => {
     setView('orders'); renderOrdersList();
   });
+
+  // Edit ficha (Rascunho or Enviado, owner/admin only — see canEditOrder)
+  const editOrderBtn = panel.querySelector('#edit-order-btn');
+  if (editOrderBtn) {
+    editOrderBtn.addEventListener('click', () => {
+      renderOrderCreate(order);
+      setView('order-create');
+    });
+  }
 
   // Draft: send to warehouse
   const draftSendBtn = panel.querySelector('#draft-send-btn');
