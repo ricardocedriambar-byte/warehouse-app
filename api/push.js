@@ -12,10 +12,14 @@
 //                         VAPID public key it needs to create a subscription
 //   POST   /api/push  -> { userId, subscription }   saves/updates a device's
 //                         push subscription
+//   PATCH  /api/push  -> { userId }                  sends a test notification
+//                         to every device that user has subscribed, with
+//                         per-device success/failure detail — the "Enviar
+//                         notificação de teste" button in Settings
 //   DELETE /api/push  -> { endpoint }                removes a device's
 //                         subscription (e.g. notifications turned off)
 
-const { saveSubscription, removeSubscriptionByEndpoint } = require('../lib/push');
+const { saveSubscription, removeSubscriptionByEndpoint, sendTestPush } = require('../lib/push');
 
 module.exports = async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
@@ -41,6 +45,22 @@ module.exports = async (req, res) => {
       res.status(200).json({ ok: true });
     } catch (err) {
       console.error('push-subscribe failed:', err);
+      res.status(500).json({ error: err.message });
+    }
+    return;
+  }
+
+  if (req.method === 'PATCH') {
+    const { userId } = req.body || {};
+    if (!userId) {
+      res.status(400).json({ error: 'userId é obrigatório' });
+      return;
+    }
+    try {
+      const result = await sendTestPush(userId);
+      res.status(200).json(result);
+    } catch (err) {
+      console.error('push test failed:', err);
       res.status(500).json({ error: err.message });
     }
     return;

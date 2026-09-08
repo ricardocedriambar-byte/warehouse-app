@@ -2308,6 +2308,7 @@ function renderSettingsForm(panel, u) {
         <span class="toggle-switch"></span>
       </label>
       <p class="settings-hint">Recebidas como notificação push neste dispositivo (e por email, no caso de encomendas). Também é preciso ativar as notificações do browser — se ainda não o fizeste, sai e volta a entrar para veres esse pedido.</p>
+      <button class="order-action-btn order-action-btn--draft" id="settings-test-push-btn" type="button" style="width:100%;margin-top:var(--sp-3)">Enviar notificação de teste</button>
     </div>
 
     <div class="section-label">Ecrã inicial ao entrar</div>
@@ -2364,6 +2365,33 @@ function renderSettingsForm(panel, u) {
       showError(err, 'Não foi possível guardar. Tente novamente.');
     } finally {
       btn.disabled = false; btn.textContent = 'Guardar';
+    }
+  });
+
+  // Surfaces exactly why a test push did or didn't arrive — sendPushToUsers
+  // (used for real alerts) is fire-and-forget and only logs failures on the
+  // server, which makes "I'm not getting notifications" impossible to
+  // debug from the app itself. This calls the same send path but reports
+  // per-device results back here instead.
+  panel.querySelector('#settings-test-push-btn')?.addEventListener('click', async () => {
+    const btn = panel.querySelector('#settings-test-push-btn');
+    btn.disabled = true; btn.textContent = 'A enviar…';
+    try {
+      const result = await apiPatch('/api/push', { userId: u.id });
+      console.log('push test result:', result);
+      if (result.ok) {
+        const okCount = result.devices.filter(d => d.ok).length;
+        toast(`Teste enviado (${okCount}/${result.devices.length} dispositivo${result.devices.length !== 1 ? 's' : ''}) — devias recebê-lo agora`, 'success');
+      } else if (result.reason) {
+        toast(result.reason, 'error');
+      } else {
+        const firstError = (result.devices || []).find(d => !d.ok);
+        toast(firstError ? `Falha ao enviar: ${firstError.error}` : 'Falha ao enviar notificação de teste', 'error');
+      }
+    } catch (err) {
+      showError(err, 'Não foi possível enviar a notificação de teste');
+    } finally {
+      btn.disabled = false; btn.textContent = 'Enviar notificação de teste';
     }
   });
 }
