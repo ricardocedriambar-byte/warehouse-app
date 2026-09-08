@@ -106,6 +106,7 @@ async function showLoginScreen() {
         await loadOrders({ silent: true });
         renderOrdersList();
         loadAllItems();
+        ensurePushPermissionPrompt();
         if (user.defaultTab && $(`.tabbar__btn[data-goto="${user.defaultTab}"]`)) {
           $(`.tabbar__btn[data-goto="${user.defaultTab}"]`).click();
         }
@@ -115,6 +116,125 @@ async function showLoginScreen() {
     list.innerHTML = `<div class="login-overlay__loading" style="color:var(--danger)">
       Erro ao carregar utilizadores</div>`;
   }
+}
+
+// ═══════════════════════════════════════════════════════════
+// PUSH NOTIFICATIONS
+// ═══════════════════════════════════════════════════════════
+// Replaces the old Resend-email notifications (low stock, order sent) —
+// see lib/push.js for the server side. Two capability trade-offs vs email:
+// a push payload can't carry the PDF ficha attachment, and since the app
+// has no URL-based view routing, tapping a notification can only
+// open/focus the app rather than jump straight to the order/item.
+const PUSH_ASKED_KEY_PREFIX = 'cedriambar_push_asked_';
+
+function pushSupported() {
+  return 'serviceWorker' in navigator && 'PushManager' in window && typeof Notification !== 'undefined';
+}
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; i++) outputArray[i] = rawData.charCodeAt(i);
+  return outputArray;
+}
+
+// Subscribes this browser/device to push and saves it against the current
+// user. Safe to call repeatedly — pushManager.subscribe() hands back the
+// existing subscription if one's already active, and /api/push-subscribe
+// upserts by endpoint. Pass requestPermission=true to actually prompt when
+// permission is still "default"; pass false to only (re)sync an
+// already-granted subscription without ever prompting.
+async function subscribeThisDeviceToPush(requestPermission) {
+  if (!pushSupported() || !auth.user) return false;
+
+  if (Notification.permission === 'default') {
+    if (!requestPermission) return false;
+    const result = await Notification.requestPermission();
+    if (result !== 'granted') return false;
+  } else if (Notification.permission === 'denied') {
+    return false;
+  }
+
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    let subscription = await reg.pushManager.getSubscription();
+    if (!subscription) {
+      const { publicKey } = await apiGet('/api/vapid-public-key');
+      subscription = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(publicKey)
+      });
+    }
+    await apiPost('/api/push-subscribe', { userId: auth.user.id, subscription: subscription.toJSON() });
+    return true;
+  } catch (err) {
+    console.error('push subscribe failed:', err);
+    return false;
+  }
+}
+
+function showPushPermissionOverlay() {
+  const overlay = document.createElement('div');
+  overlay.className = 'push-permission-overlay';
+  overlay.innerHTML = `
+    <div class="push-permission-card">
+      <div class="push-permission-card__icon">🔔</div>
+      <div class="push-permission-card__title">Ativar notificações?</div>
+      <p class="push-permission-card__text">
+        Recebe um aviso neste dispositivo quando o stock de um artigo ficar baixo ou uma encomenda for enviada.
+      </p>
+      <div class="push-permission-card__actions">
+        <button class="order-action-btn order-action-btn--draft" id="push-permission-skip">Agora não</button>
+        <button class="order-action-btn order-action-btn--send" id="push-permission-enable">Ativar notificações</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  const dismiss = () => {
+    if (auth.user) localStorage.setItem(PUSH_ASKED_KEY_PREFIX + auth.user.id, '1');
+    overlay.remove();
+  };
+
+  overlay.querySelector('#push-permission-skip').addEventListener('click', dismiss);
+  overlay.querySelector('#push-permission-enable').addEventListener('click', async () => {
+    const btn = overlay.querySelector('#push-permission-enable');
+    btn.disabled = true;
+    btn.textContent = 'A ativar…';
+    const ok = await subscribeThisDeviceToPush(true);
+    if (!ok && Notification.permission === 'denied') {
+      toast('Notificações bloqueadas no browser — podes ativá-las nas definições do site', 'error');
+    } else if (!ok) {
+      toast('Não foi possível ativar as notificações', 'error');
+    } else {
+      toast('Notificações ativadas');
+    }
+    dismiss();
+  });
+}
+
+// Called once per login (fresh login and returning session alike). Shows
+// the one-time "enable notifications" prompt unless this device/user has
+// already been asked, or the browser has already granted/denied
+// permission at some point (nothing to ask in that case).
+function ensurePushPermissionPrompt() {
+  if (!pushSupported() || !auth.user) return;
+
+  if (Notification.permission === 'granted') {
+    // Already allowed — e.g. enabled from another device/browser earlier —
+    // just make sure this device's own subscription is saved, no prompt.
+    subscribeThisDeviceToPush(false);
+    return;
+  }
+
+  if (Notification.permission === 'denied') return; // browser blocks re-prompting anyway
+
+  const askedKey = PUSH_ASKED_KEY_PREFIX + auth.user.id;
+  if (localStorage.getItem(askedKey)) return;
+
+  showPushPermissionOverlay();
 }
 
 function applyRoleRestrictions() {
@@ -2538,6 +2658,7 @@ function init() {
     loadItemsFromCache();
     loadAllItems();
     loadOrders({ silent: true }).then(() => renderOrdersList());
+    ensurePushPermissionPrompt();
   } else {
     showLoginScreen();
   }

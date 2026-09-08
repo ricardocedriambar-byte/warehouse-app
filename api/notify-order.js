@@ -1,103 +1,33 @@
 // api/notify-order.js
 //
-// POST /api/notify-order — sends an email notification with the filled
-// "Nota de Encomenda" PDF attached. Currently used to notify Ricardo
-// whenever an order is sent to backorder ("Enviado").
+// POST /api/notify-order — sends a push notification whenever an order is
+// sent to backorder ("Enviado") or an already-sent order is edited.
 //
-// Uses Resend (https://resend.com) because it needs no SMTP setup, no app
-// passwords, and has a free tier (100 emails/day) that's more than enough
-// for this volume.
+// This used to send an email (via Resend) with the filled "Nota de
+// Encomenda" PDF attached. Push notifications can't carry attachments, so
+// this version just notifies with a title/body — whoever gets it opens the
+// app to see the order and print/view the ficha from there. It also can't
+// deep-link to the specific order (the app has no URL-based view routing),
+// so tapping the notification just opens/focuses the app.
 //
-// ─── One-time setup ─────────────────────────────────────────────────────
-//   1. Create a free account at https://resend.com (email + password,
-//      no credit card needed for the free tier).
-//   2. Dashboard → API Keys → "Create API Key" → copy the key it gives you
-//      (starts with "re_"). You only see it once, so save it somewhere.
-//   3. Run `npm install pdf-lib` in the project (needed by
-//      lib/pdf-order-note.js to fill the PDF template).
-//   4. Place the template file at lib/nota-encomenda-template.pdf
-//      (provided alongside this file).
-//   5. In Vercel: your project → Settings → Environment Variables, add:
-//        RESEND_API_KEY     = <the key from step 2>
-//        NOTIFY_EMAIL_TO    = <the email address that should receive these>
-//        NOTIFY_EMAIL_FROM  = onboarding@resend.dev   (see note below)
-//   6. Redeploy (env var and file changes need a redeploy to take effect).
-//
-// ─── Note on NOTIFY_EMAIL_FROM ──────────────────────────────────────────
-// Resend only lets you send FROM a domain you've verified with them. Until
-// you verify your own domain (Resend dashboard → Domains → add
-// cedriambar.pt or whichever you use, then add the DNS records they give
-// you), use their shared address "onboarding@resend.dev" as the sender —
-// it works immediately with zero setup, but Resend restricts it to only
-// deliver TO the email address you signed up to Resend with. That's fine
-// for this use case (it's just going to your own inbox). If down the line
-// you want it to go to more people or a nicer "from" name, verify a domain
-// and switch NOTIFY_EMAIL_FROM to something like
-// "encomendas@cedriambar.pt".
-// ─────────────────────────────────────────────────────────────────────────
+// ─── Setup ──────────────────────────────────────────────────────────────
+// Needs VAPID_PUBLIC_KEY/VAPID_PRIVATE_KEY set — see lib/push.js for the
+// one-time setup. Recipients are anyone with "NotificarEncomendas" checked
+// in the Utilizadores tab (Settings screen) who has enabled push
+// notifications on at least one device.
+// ───────────────────────────────────────────────────────────────────────
 
-const { buildOrderNotePdf } = require('../lib/pdf-order-note');
-const { getNotifyRecipients } = require('../lib/users');
+const { getNotifyRecipientUserIds } = require('../lib/users');
+const { sendPushToUsers } = require('../lib/push');
 
 function fmtNum(n, decimals = 2) {
   if (n === null || n === undefined || Number.isNaN(n)) return '—';
   return Number(n).toLocaleString('pt-PT', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
 }
 
-function buildEmailHTML(order, client) {
-  const date  = order.createdAt ? new Date(order.createdAt).toLocaleDateString('pt-PT') : new Date().toLocaleDateString('pt-PT');
-  const lines = order.lines || [];
-  const lineNet = l => (l.qtyOrdered || 0) * (l.unitPrice || 0) * (1 - (l.discountPct || 0) / 100);
-  const total = lines.reduce((sum, l) => sum + lineNet(l), 0);
-
-  const rows = lines.map(l => `
-    <tr>
-      <td style="padding:6px 8px;border-bottom:1px solid #e5e5e5;">${l.sku || '—'}</td>
-      <td style="padding:6px 8px;border-bottom:1px solid #e5e5e5;">${l.descricao || ''}</td>
-      <td style="padding:6px 8px;border-bottom:1px solid #e5e5e5;text-align:center;">${fmtNum(l.qtyOrdered, 0)} ${l.unidade || 'un'}</td>
-      <td style="padding:6px 8px;border-bottom:1px solid #e5e5e5;text-align:right;">${fmtNum(l.unitPrice)}</td>
-      <td style="padding:6px 8px;border-bottom:1px solid #e5e5e5;text-align:right;">${l.discountPct ? fmtNum(l.discountPct, 0) + '%' : '—'}</td>
-      <td style="padding:6px 8px;border-bottom:1px solid #e5e5e5;text-align:right;">${fmtNum(lineNet(l))}</td>
-    </tr>`).join('');
-
-  return `
-    <div style="font-family:Arial,sans-serif;color:#111;max-width:600px;margin:0 auto;">
-      <h2 style="margin:0 0 4px;">Nova encomenda enviada</h2>
-      <p style="margin:0 0 16px;color:#555;font-size:14px;">
-        <strong>${order.orderId || ''}</strong> · ${date}<br/>
-        Cliente: ${client?.name || order.clientName || '—'}<br/>
-        Vendedor: ${order.salesperson || '—'}
-        ${order.orderNotes ? `<br/>Notas: ${order.orderNotes}` : ''}
-      </p>
-      <table style="width:100%;border-collapse:collapse;font-size:13px;">
-        <thead>
-          <tr style="background:#f5f5f5;text-align:left;">
-            <th style="padding:6px 8px;">SKU</th>
-            <th style="padding:6px 8px;">Descrição</th>
-            <th style="padding:6px 8px;text-align:center;">Qtd</th>
-            <th style="padding:6px 8px;text-align:right;">Preço</th>
-            <th style="padding:6px 8px;text-align:right;">Desc.</th>
-            <th style="padding:6px 8px;text-align:right;">Total</th>
-          </tr>
-        </thead>
-        <tbody>${rows}</tbody>
-        <tfoot>
-          <tr>
-            <td colspan="5" style="padding:8px;text-align:right;"><strong>Total</strong></td>
-            <td style="padding:8px;text-align:right;"><strong>${fmtNum(total)}</strong></td>
-          </tr>
-        </tfoot>
-      </table>
-      <p style="font-size:12px;color:#888;margin-top:16px;">Nota de encomenda em anexo (PDF).</p>
-    </div>`;
-}
-
 module.exports = async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   if (req.method !== 'POST') { res.status(405).json({ error: 'Method not allowed' }); return; }
-
-  const apiKey = process.env.RESEND_API_KEY;
-  const from   = process.env.NOTIFY_EMAIL_FROM || 'onboarding@resend.dev';
 
   const { order, client } = req.body || {};
   if (!order) {
@@ -106,52 +36,25 @@ module.exports = async (req, res) => {
   }
 
   try {
-    // Recipients: anyone who opted in to order notifications in the
-    // Utilizadores tab (Settings screen), falling back to the fixed
-    // NOTIFY_EMAIL_TO env var so this keeps working before anyone's set
-    // that up. Note Resend's free/unverified-sender tier only actually
-    // delivers to the address you signed up with, whatever's listed here.
-    let to = [];
-    try {
-      to = await getNotifyRecipients('orders');
-    } catch (err) {
-      console.error('notify-order: failed to load opted-in recipients, falling back to NOTIFY_EMAIL_TO', err);
-    }
-    if (to.length === 0 && process.env.NOTIFY_EMAIL_TO) to = [process.env.NOTIFY_EMAIL_TO];
-
-    if (!apiKey || to.length === 0) {
-      console.error('notify-order: missing RESEND_API_KEY or no recipients configured');
-      res.status(500).json({ error: 'Email not configured on the server' });
+    const userIds = await getNotifyRecipientUserIds('orders');
+    if (userIds.length === 0) {
+      // Nobody opted in yet — not an error, just nothing to do.
+      res.status(200).json({ ok: true, sent: 0 });
       return;
     }
 
-    const pdfBytes  = await buildOrderNotePdf(order, client || {});
-    const pdfBase64 = Buffer.from(pdfBytes).toString('base64');
+    const lines = order.lines || [];
+    const lineNet = l => (l.qtyOrdered || 0) * (l.unitPrice || 0) * (1 - (l.discountPct || 0) / 100);
+    const total = lines.reduce((sum, l) => sum + lineNet(l), 0);
+    const clientName = client?.name || order.clientName || 'cliente';
 
-    const resendRes = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        from,
-        to,
-        subject: `Nova encomenda ${order.orderId || ''} — ${client?.name || order.clientName || 'cliente'}`,
-        html: buildEmailHTML(order, client),
-        attachments: [{
-          filename: `nota_encomenda_${order.orderId || 'sem_numero'}.pdf`,
-          content: pdfBase64
-        }]
-      })
+    const result = await sendPushToUsers(userIds, {
+      title: `Nova encomenda ${order.orderId || ''}`,
+      body: `${clientName} · ${lines.length} artigo${lines.length !== 1 ? 's' : ''} · ${fmtNum(total)} €`,
+      tag: `order-${order.orderId || ''}`
     });
 
-    if (!resendRes.ok) {
-      const errBody = await resendRes.text().catch(() => '');
-      throw new Error(`Resend API error (${resendRes.status}): ${errBody}`);
-    }
-
-    res.status(200).json({ ok: true });
+    res.status(200).json({ ok: true, ...result });
   } catch (err) {
     console.error('notify-order failed:', err);
     res.status(500).json({ error: err.message });

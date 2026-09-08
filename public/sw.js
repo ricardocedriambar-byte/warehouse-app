@@ -62,3 +62,38 @@ self.addEventListener('fetch', (event) => {
       .catch(() => caches.match(event.request))
   );
 });
+
+// ─── Web Push ──────────────────────────────────────────────────────────
+// The server (lib/push.js) sends a JSON payload like
+// { title, body, tag }. Low-stock alerts and order-sent notifications
+// both go through this same handler — there's nothing order/SKU-specific
+// to branch on here, just show it.
+self.addEventListener('push', (event) => {
+  let data = {};
+  try { data = event.data ? event.data.json() : {}; } catch { data = {}; }
+
+  const title = data.title || 'Cedriambar';
+  const options = {
+    body: data.body || '',
+    tag: data.tag || undefined,
+    icon: '/icons/icon-192.png',
+    badge: '/icons/icon-192.png'
+  };
+
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+// The app has no URL-based view routing (every screen lives at "/"), so a
+// notification click can only open/focus the app's one window — it can't
+// deep-link to the specific order or item that triggered it.
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientsList) => {
+      for (const client of clientsList) {
+        if ('focus' in client) return client.focus();
+      }
+      if (self.clients.openWindow) return self.clients.openWindow('/');
+    })
+  );
+});

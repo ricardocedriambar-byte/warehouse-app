@@ -1526,6 +1526,27 @@ table.doors-doc__table tr:nth-child(even) td { background: #faf6ec; }
 }
 .send-preview-overlay__actions .order-action-btn { flex: 1; }
 
+.push-permission-overlay {
+  position: fixed; inset: 0; z-index: 250;
+  background: rgba(0,0,0,0.5);
+  display: flex; align-items: center; justify-content: center;
+  padding: var(--sp-5);
+}
+.push-permission-card {
+  width: 100%; max-width: 340px;
+  background: var(--s1);
+  border-radius: var(--r-lg);
+  padding: var(--sp-6) var(--sp-5) var(--sp-5);
+  display: flex; flex-direction: column; align-items: center;
+  text-align: center;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.35);
+}
+.push-permission-card__icon { font-size: 32px; margin-bottom: var(--sp-2); }
+.push-permission-card__title { font-size: 16px; font-weight: 700; color: var(--t1); margin-bottom: var(--sp-2); }
+.push-permission-card__text { font-size: 13px; color: var(--t2); line-height: 1.5; margin: 0 0 var(--sp-5); }
+.push-permission-card__actions { display: flex; gap: var(--sp-3); width: 100%; }
+.push-permission-card__actions .order-action-btn { flex: 1; }
+
 /* ═══════════════════════════════════════════════════════════
    RECURSOS (price lists / supplier catalogs)
    ═══════════════════════════════════════════════════════════ */
