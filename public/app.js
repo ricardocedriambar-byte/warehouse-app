@@ -143,7 +143,7 @@ function urlBase64ToUint8Array(base64String) {
 
 // Subscribes this browser/device to push and saves it against the current
 // user. Safe to call repeatedly — pushManager.subscribe() hands back the
-// existing subscription if one's already active, and /api/push-subscribe
+// existing subscription if one's already active, and POST /api/push
 // upserts by endpoint. Pass requestPermission=true to actually prompt when
 // permission is still "default"; pass false to only (re)sync an
 // already-granted subscription without ever prompting.
@@ -162,13 +162,13 @@ async function subscribeThisDeviceToPush(requestPermission) {
     const reg = await navigator.serviceWorker.ready;
     let subscription = await reg.pushManager.getSubscription();
     if (!subscription) {
-      const { publicKey } = await apiGet('/api/vapid-public-key');
+      const { publicKey } = await apiGet('/api/push');
       subscription = await reg.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey: urlBase64ToUint8Array(publicKey)
       });
     }
-    await apiPost('/api/push-subscribe', { userId: auth.user.id, subscription: subscription.toJSON() });
+    await apiPost('/api/push', { userId: auth.user.id, subscription: subscription.toJSON() });
     return true;
   } catch (err) {
     console.error('push subscribe failed:', err);
@@ -605,7 +605,7 @@ async function saveField(field, value) {
   if (field === 'unidade') body.unidade = value;
 
   try {
-    const res = await fetch('/api/update-item', {
+    const res = await fetch('/api/items', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
