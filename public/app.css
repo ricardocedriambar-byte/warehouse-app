@@ -236,11 +236,16 @@ input[type=number] { -moz-appearance: textfield; }
 /* A pill materializes behind the icon on the active tab instead of just a
    color change — small motion, but it's what makes switching tabs feel
    like a deliberate UI response instead of a static state swap. */
+/* Sized to actually enclose the 22px icon: the button's own padding-top
+   (10px) puts the icon at y=[10,32], so this pill (top:6, height:30) is
+   centered on that same range with a few px of breathing room on every
+   side — the earlier top:3/height:24 fell short of the icon's bottom edge
+   and let it hang below the pill onto the plain background. */
 .tabbar__btn::before {
   content: '';
   position: absolute;
-  top: 3px; left: 50%;
-  width: 40px; height: 24px;
+  top: 6px; left: 50%;
+  width: 40px; height: 30px;
   border-radius: var(--r-full);
   background: var(--id-dim);
   opacity: 0;
