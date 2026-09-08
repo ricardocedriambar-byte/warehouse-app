@@ -37,6 +37,7 @@
 // ─────────────────────────────────────────────────────────────────────────
 
 const { buildOrderNotePdf } = require('../lib/pdf-order-note');
+const { getNotifyRecipients } = require('../lib/users');
 
 function fmtNum(n, decimals = 2) {
   if (n === null || n === undefined || Number.isNaN(n)) return '—';
@@ -96,14 +97,7 @@ module.exports = async (req, res) => {
   if (req.method !== 'POST') { res.status(405).json({ error: 'Method not allowed' }); return; }
 
   const apiKey = process.env.RESEND_API_KEY;
-  const to     = process.env.NOTIFY_EMAIL_TO;
   const from   = process.env.NOTIFY_EMAIL_FROM || 'onboarding@resend.dev';
-
-  if (!apiKey || !to) {
-    console.error('notify-order: missing RESEND_API_KEY or NOTIFY_EMAIL_TO env vars');
-    res.status(500).json({ error: 'Email not configured on the server' });
-    return;
-  }
 
   const { order, client } = req.body || {};
   if (!order) {
@@ -112,6 +106,25 @@ module.exports = async (req, res) => {
   }
 
   try {
+    // Recipients: anyone who opted in to order notifications in the
+    // Utilizadores tab (Settings screen), falling back to the fixed
+    // NOTIFY_EMAIL_TO env var so this keeps working before anyone's set
+    // that up. Note Resend's free/unverified-sender tier only actually
+    // delivers to the address you signed up with, whatever's listed here.
+    let to = [];
+    try {
+      to = await getNotifyRecipients('orders');
+    } catch (err) {
+      console.error('notify-order: failed to load opted-in recipients, falling back to NOTIFY_EMAIL_TO', err);
+    }
+    if (to.length === 0 && process.env.NOTIFY_EMAIL_TO) to = [process.env.NOTIFY_EMAIL_TO];
+
+    if (!apiKey || to.length === 0) {
+      console.error('notify-order: missing RESEND_API_KEY or no recipients configured');
+      res.status(500).json({ error: 'Email not configured on the server' });
+      return;
+    }
+
     const pdfBytes  = await buildOrderNotePdf(order, client || {});
     const pdfBase64 = Buffer.from(pdfBytes).toString('base64');
 

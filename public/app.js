@@ -10,7 +10,16 @@ const auth = {
   user: null,
   isWarehouse() { return this.user?.role === 'armazém'; },
   isVendedor()  { return this.user?.role === 'vendedor'; },
+  isAdmin()     { return this.user?.role === 'admin'; },
 };
+
+const ROLE_LABELS = { 'armazém': '📦 Armazém', 'vendedor': '🧾 Vendedor', 'admin': '🔧 Admin' };
+function roleLabel(role) { return ROLE_LABELS[role] || role; }
+
+// Small palette of distinct, on-brand hues users can pick for their avatar
+// in Settings — first two match the existing green/timber identity colors
+// so the defaults stay familiar.
+const AVATAR_COLORS = ['#2e9e68', '#c07e38', '#4a9e6a', '#5b8dee', '#c05a4a', '#9d6228', '#8a63d2', '#3fa7c4'];
 
 function saveAuth(user) {
   auth.user = user;
@@ -39,7 +48,10 @@ function updateTopbarUser() {
   if (!btn) return;
   if (auth.user) {
     if (nameEl) nameEl.textContent = auth.user.name;
-    if (avatar) avatar.textContent = auth.user.name.charAt(0).toUpperCase();
+    if (avatar) {
+      avatar.textContent = auth.user.name.charAt(0).toUpperCase();
+      avatar.style.background = auth.user.avatarColor || '';
+    }
     btn.style.display = 'flex';
   } else {
     btn.style.display = 'none';
@@ -72,18 +84,21 @@ async function showLoginScreen() {
     }
 
     list.innerHTML = users.map(u => `
-      <button class="login-user-btn" data-id="${u.id}" data-name="${u.name}" data-role="${u.role}">
-        <div class="login-user-btn__avatar">${u.name.charAt(0).toUpperCase()}</div>
+      <button class="login-user-btn" data-id="${u.id}" data-name="${u.name}" data-role="${u.role}" data-default-tab="${u.defaultTab || ''}" data-avatar-color="${u.avatarColor || ''}">
+        <div class="login-user-btn__avatar" style="${u.avatarColor ? `background:${u.avatarColor}` : ''}">${u.name.charAt(0).toUpperCase()}</div>
         <div class="login-user-btn__info">
           <span class="login-user-btn__name">${u.name}</span>
-          <span class="login-user-btn__role">${u.role === 'armazém' ? '📦 Armazém' : '🧾 Vendedor'}</span>
+          <span class="login-user-btn__role">${roleLabel(u.role)}</span>
         </div>
       </button>
     `).join('');
 
     list.querySelectorAll('.login-user-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
-        const user = { id: btn.dataset.id, name: btn.dataset.name, role: btn.dataset.role };
+        const user = {
+          id: btn.dataset.id, name: btn.dataset.name, role: btn.dataset.role,
+          defaultTab: btn.dataset.defaultTab || '', avatarColor: btn.dataset.avatarColor || ''
+        };
         saveAuth(user);
         overlay.style.display = 'none';
         applyRoleRestrictions();
@@ -91,6 +106,9 @@ async function showLoginScreen() {
         await loadOrders({ silent: true });
         renderOrdersList();
         loadAllItems();
+        if (user.defaultTab && $(`.tabbar__btn[data-goto="${user.defaultTab}"]`)) {
+          $(`.tabbar__btn[data-goto="${user.defaultTab}"]`).click();
+        }
       });
     });
   } catch (err) {
@@ -101,10 +119,13 @@ async function showLoginScreen() {
 
 function applyRoleRestrictions() {
   const newOrderBtn = $('#new-order-btn');
-  if (newOrderBtn) newOrderBtn.style.display = auth.isWarehouse() ? 'none' : '';
+  if (newOrderBtn) newOrderBtn.style.display = (auth.isWarehouse() && !auth.isAdmin()) ? 'none' : '';
 
   const recursosBtn = $('#recursos-tab-btn');
-  if (recursosBtn) recursosBtn.style.display = auth.isVendedor() ? '' : 'none';
+  if (recursosBtn) recursosBtn.style.display = (auth.isVendedor() || auth.isAdmin()) ? '' : 'none';
+
+  const adminBtn = $('#admin-menu-item');
+  if (adminBtn) adminBtn.style.display = auth.isAdmin() ? '' : 'none';
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -719,8 +740,10 @@ function renderOrdersList() {
     : '';
 
   let visible = orderState.orders.filter(order => {
-    if (isWarehouse) return order.status === 'Em separação';
-    if (order.status === 'Rascunho')  return order.salesperson === user?.name;
+    // Admin sees every order regardless of role — no warehouse-only or
+    // own-drafts-only restriction applies.
+    if (isWarehouse && !auth.isAdmin()) return order.status === 'Em separação';
+    if (order.status === 'Rascunho' && !auth.isAdmin()) return order.salesperson === user?.name;
     if (order.status === 'Cancelado') return !orderState.filterActive;
     return true;
   });
@@ -758,8 +781,8 @@ function renderHome() {
   // Same visibility rules as the Orders tab (see renderOrdersList), so the
   // preview here never shows an order this user couldn't open from there.
   let activeOrders = orderState.orders.filter(order => {
-    if (isWarehouse) return order.status === 'Em separação';
-    if (order.status === 'Rascunho') return order.salesperson === user?.name;
+    if (isWarehouse && !auth.isAdmin()) return order.status === 'Em separação';
+    if (order.status === 'Rascunho' && !auth.isAdmin()) return order.salesperson === user?.name;
     return isActiveOrder(order);
   });
   activeOrders = activeOrders.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
@@ -1795,6 +1818,350 @@ function renderOrderPick(order, isDraft) {
 }
 
 // ═══════════════════════════════════════════════════════════
+// SETTINGS (per-user)
+// ═══════════════════════════════════════════════════════════
+async function renderSettings() {
+  const panel = $('#settings-panel');
+  if (!panel || !auth.user) return;
+
+  // auth.user (from localStorage / the login list) only carries the
+  // minimal fields the login screen needs (id/name/role/defaultTab/
+  // avatarColor) — fetch the full record so email and notification
+  // toggles aren't shown blank even when they were set previously.
+  panel.innerHTML = `<button class="back-btn" id="settings-back-btn">‹ Voltar</button>` + skeletonRows(3);
+  panel.querySelector('#settings-back-btn').addEventListener('click', () => setView('home'));
+
+  let u = auth.user;
+  try {
+    const res = await fetch('/api/users?all=true');
+    const data = await res.json();
+    const full = (data.users || []).find(x => x.id === auth.user.id);
+    if (full) u = full;
+  } catch (err) {
+    console.error('settings: failed to load full profile, using cached fields', err);
+  }
+
+  renderSettingsForm(panel, u);
+}
+
+function renderSettingsForm(panel, u) {
+  const tabOptions = [
+    ['', 'Início (padrão)'], ['scan', 'Digitalizar'], ['orders', 'Encomendas'],
+    ['browse', 'Inventário'], ['recursos', 'Recursos'], ['viaturas', 'Viaturas']
+  ];
+
+  panel.innerHTML = `
+    <button class="back-btn" id="settings-back-btn">‹ Voltar</button>
+
+    <div class="settings-card">
+      <div class="settings-profile">
+        <div class="settings-profile__avatar" id="settings-avatar-preview" style="${u.avatarColor ? `background:${u.avatarColor}` : ''}">${u.name.charAt(0).toUpperCase()}</div>
+        <div>
+          <div class="settings-profile__name">${u.name}</div>
+          <div class="settings-profile__role">${roleLabel(u.role)}</div>
+        </div>
+      </div>
+      <input class="order-field" id="settings-email" type="email" placeholder="email para notificações" value="${u.email || ''}" style="margin-bottom:0" />
+    </div>
+
+    <div class="section-label">Notificações por email</div>
+    <div class="settings-card">
+      <label class="toggle-row">
+        <span>Novas encomendas enviadas</span>
+        <input type="checkbox" id="settings-notify-orders" ${u.notifyOrders ? 'checked' : ''} />
+        <span class="toggle-switch"></span>
+      </label>
+      <label class="toggle-row">
+        <span>Alertas de stock baixo</span>
+        <input type="checkbox" id="settings-notify-lowstock" ${u.notifyLowStock ? 'checked' : ''} />
+        <span class="toggle-switch"></span>
+      </label>
+    </div>
+
+    <div class="section-label">Ecrã inicial ao entrar</div>
+    <div class="settings-card">
+      <select class="order-field" id="settings-default-tab" style="margin-bottom:0">
+        ${tabOptions.map(([v, l]) => `<option value="${v}" ${u.defaultTab === v ? 'selected' : ''}>${l}</option>`).join('')}
+      </select>
+    </div>
+
+    <div class="section-label">Cor do avatar</div>
+    <div class="settings-card">
+      <div class="avatar-color-picker" id="avatar-color-picker">
+        ${AVATAR_COLORS.map(c => `<button type="button" class="avatar-color-swatch" data-color="${c}" data-selected="${u.avatarColor === c}" style="background:${c}"></button>`).join('')}
+      </div>
+    </div>
+
+    <button class="btn-primary" id="settings-save-btn" style="width:100%;margin-top:var(--sp-2)">Guardar</button>
+  `;
+
+  panel.querySelector('#settings-back-btn').addEventListener('click', () => setView('home'));
+
+  let selectedColor = u.avatarColor || '';
+  panel.querySelectorAll('.avatar-color-swatch').forEach(sw => {
+    sw.addEventListener('click', () => {
+      selectedColor = sw.dataset.color;
+      panel.querySelectorAll('.avatar-color-swatch').forEach(s => s.dataset.selected = String(s === sw));
+      const preview = $('#settings-avatar-preview');
+      if (preview) preview.style.background = selectedColor;
+    });
+  });
+
+  panel.querySelector('#settings-save-btn').addEventListener('click', async () => {
+    const btn = panel.querySelector('#settings-save-btn');
+    btn.disabled = true; btn.textContent = 'A guardar…';
+    const fields = {
+      email: $('#settings-email').value.trim(),
+      notifyOrders: $('#settings-notify-orders').checked,
+      notifyLowStock: $('#settings-notify-lowstock').checked,
+      defaultTab: $('#settings-default-tab').value,
+      avatarColor: selectedColor
+    };
+    try {
+      const res = await fetch('/api/users', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: u.id, ...fields })
+      });
+      if (!res.ok) throw new Error('save failed');
+      auth.user = { ...auth.user, ...fields };
+      localStorage.setItem(AUTH_KEY, JSON.stringify(auth.user));
+      updateTopbarUser();
+      toast('Definições guardadas', 'success');
+    } catch (err) {
+      showError(err, 'Não foi possível guardar. Tente novamente.');
+    } finally {
+      btn.disabled = false; btn.textContent = 'Guardar';
+    }
+  });
+}
+
+// ═══════════════════════════════════════════════════════════
+// ADMIN PANEL
+// ═══════════════════════════════════════════════════════════
+function renderAdminPanel() {
+  const panel = $('#admin-panel');
+  if (!panel) return;
+
+  panel.innerHTML = `
+    <button class="back-btn" id="admin-back-btn">‹ Voltar</button>
+
+    <div class="admin-section-title">Utilizadores</div>
+    <div class="admin-card" id="admin-users-card">${skeletonRows(3)}</div>
+
+    <div class="admin-section-title">Adicionar utilizador</div>
+    <div class="admin-card">
+      <input class="order-field" id="admin-new-name" placeholder="Nome" />
+      <select class="order-field" id="admin-new-role" style="margin-bottom:0">
+        <option value="vendedor">🧾 Vendedor</option>
+        <option value="armazém">📦 Armazém</option>
+        <option value="admin">🔧 Admin</option>
+      </select>
+      <button class="btn-primary" id="admin-add-user-btn" style="width:100%;margin-top:var(--sp-3)">Adicionar</button>
+    </div>
+
+    <div class="admin-section-title">Materiais de portas</div>
+    <div class="admin-card" id="admin-materials-card">${skeletonRows(2)}</div>
+
+    <div class="admin-section-title">Sincronização de preços</div>
+    <div class="admin-card">
+      <p style="font-size:13px;color:var(--t2);margin:0 0 var(--sp-3)">
+        Atualiza os preços do catálogo a partir da lista de preços no OneDrive.
+      </p>
+      <button class="btn-ghost" id="admin-sync-btn" style="width:100%">Sincronizar agora</button>
+    </div>
+  `;
+
+  panel.querySelector('#admin-back-btn').addEventListener('click', () => setView('home'));
+
+  panel.querySelector('#admin-add-user-btn').addEventListener('click', async () => {
+    const nameInput = $('#admin-new-name');
+    const name = nameInput.value.trim();
+    if (!name) { toast('Indica um nome', 'error'); return; }
+    const role = $('#admin-new-role').value;
+    const btn = panel.querySelector('#admin-add-user-btn');
+    btn.disabled = true; btn.textContent = 'A adicionar…';
+    try {
+      const res = await fetch('/api/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, role })
+      });
+      if (!res.ok) throw new Error('create failed');
+      nameInput.value = '';
+      toast('Utilizador adicionado', 'success');
+      loadAdminUsers();
+    } catch (err) {
+      showError(err, 'Não foi possível adicionar o utilizador.');
+    } finally {
+      btn.disabled = false; btn.textContent = 'Adicionar';
+    }
+  });
+
+  panel.querySelector('#admin-sync-btn').addEventListener('click', async () => {
+    const btn = panel.querySelector('#admin-sync-btn');
+    btn.disabled = true; btn.textContent = 'A sincronizar…';
+    try {
+      const res = await fetch('/api/sync-prices', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'sync failed');
+      const changed = data.summary?.changed ?? 0;
+      toast(`Sincronização concluída (${changed} preço${changed !== 1 ? 's' : ''} atualizado${changed !== 1 ? 's' : ''})`, 'success');
+    } catch (err) {
+      showError(err, 'Não foi possível sincronizar os preços.');
+    } finally {
+      btn.disabled = false; btn.textContent = 'Sincronizar agora';
+    }
+  });
+
+  loadAdminUsers();
+  loadAdminMaterials();
+}
+
+async function loadAdminUsers() {
+  const card = $('#admin-users-card');
+  if (!card) return;
+  try {
+    const res = await fetch('/api/users?all=true');
+    const data = await res.json();
+    const users = data.users || [];
+
+    if (users.length === 0) {
+      card.innerHTML = `<div class="home-empty">Sem utilizadores</div>`;
+      return;
+    }
+
+    card.innerHTML = users.map(u => `
+      <div class="admin-user-row" data-id="${u.id}">
+        <div class="admin-user-row__top">
+          <div class="admin-user-row__avatar" style="${u.avatarColor ? `background:${u.avatarColor}` : ''}">${u.name.charAt(0).toUpperCase()}</div>
+          <div style="flex:1">
+            <div class="admin-user-row__name">${u.name}</div>
+            <div class="admin-user-row__meta">${u.email || 'sem email'}</div>
+          </div>
+          <label class="admin-user-row__ativo">
+            Ativo
+            <input type="checkbox" class="admin-user-ativo" ${u.ativo ? 'checked' : ''} ${u.id === auth.user?.id ? 'disabled' : ''} />
+          </label>
+        </div>
+        <div class="admin-user-row__fields">
+          <select class="order-field admin-user-role">
+            <option value="vendedor" ${u.role === 'vendedor' ? 'selected' : ''}>🧾 Vendedor</option>
+            <option value="armazém" ${u.role === 'armazém' ? 'selected' : ''}>📦 Armazém</option>
+            <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>🔧 Admin</option>
+          </select>
+          <input class="order-field admin-user-email" type="email" placeholder="email" value="${u.email || ''}" />
+        </div>
+        <button class="btn-ghost admin-user-save-btn" style="width:100%">Guardar</button>
+      </div>
+    `).join('');
+
+    card.querySelectorAll('.admin-user-row').forEach(row => {
+      const id = row.dataset.id;
+      row.querySelector('.admin-user-save-btn').addEventListener('click', async () => {
+        const btn = row.querySelector('.admin-user-save-btn');
+        const fields = {
+          role: row.querySelector('.admin-user-role').value,
+          ativo: row.querySelector('.admin-user-ativo').checked,
+          email: row.querySelector('.admin-user-email').value.trim()
+        };
+        btn.disabled = true; btn.textContent = 'A guardar…';
+        try {
+          const res = await fetch('/api/users', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id, ...fields })
+          });
+          if (!res.ok) throw new Error('update failed');
+          toast('Utilizador atualizado', 'success');
+          if (id === auth.user?.id) {
+            auth.user = { ...auth.user, ...fields };
+            localStorage.setItem(AUTH_KEY, JSON.stringify(auth.user));
+          }
+        } catch (err) {
+          showError(err, 'Não foi possível guardar as alterações.');
+        } finally {
+          btn.disabled = false; btn.textContent = 'Guardar';
+        }
+      });
+    });
+  } catch (err) {
+    card.innerHTML = `<div class="home-empty" style="color:var(--danger)">Erro ao carregar utilizadores</div>`;
+  }
+}
+
+async function loadAdminMaterials() {
+  const card = $('#admin-materials-card');
+  if (!card) return;
+  try {
+    const res = await fetch('/api/door-materials');
+    const data = await res.json();
+    renderMaterialsList(data.materials || []);
+  } catch (err) {
+    card.innerHTML = `<div class="home-empty" style="color:var(--danger)">Erro ao carregar materiais</div>`;
+  }
+}
+
+function renderMaterialsList(materials) {
+  const card = $('#admin-materials-card');
+  if (!card) return;
+
+  card.innerHTML = `
+    <div class="admin-materials-list" id="admin-materials-list">
+      ${materials.map(m => `
+        <div class="admin-material-row">
+          <input class="order-field" value="${m}" />
+          <button type="button" class="admin-material-row__remove" aria-label="Remover">×</button>
+        </div>
+      `).join('')}
+    </div>
+    <div class="admin-add-row" style="display:flex;gap:var(--sp-2)">
+      <input class="order-field" id="admin-new-material" placeholder="Novo material" style="flex:1;margin-bottom:0" />
+      <button class="btn-ghost" id="admin-add-material-btn" type="button">+</button>
+    </div>
+    <button class="btn-primary" id="admin-save-materials-btn" style="width:100%;margin-top:var(--sp-3)">Guardar lista</button>
+  `;
+
+  function wireRemove(btn) {
+    btn.addEventListener('click', () => btn.closest('.admin-material-row').remove());
+  }
+  card.querySelectorAll('.admin-material-row__remove').forEach(wireRemove);
+
+  card.querySelector('#admin-add-material-btn').addEventListener('click', () => {
+    const input = $('#admin-new-material');
+    const value = input.value.trim();
+    if (!value) return;
+    const list = $('#admin-materials-list');
+    const row = document.createElement('div');
+    row.className = 'admin-material-row';
+    row.innerHTML = `<input class="order-field" value="${value}" /><button type="button" class="admin-material-row__remove" aria-label="Remover">×</button>`;
+    list.appendChild(row);
+    wireRemove(row.querySelector('.admin-material-row__remove'));
+    input.value = '';
+    input.focus();
+  });
+
+  card.querySelector('#admin-save-materials-btn').addEventListener('click', async () => {
+    const btn = card.querySelector('#admin-save-materials-btn');
+    const values = Array.from(card.querySelectorAll('.admin-material-row input')).map(i => i.value.trim()).filter(Boolean);
+    btn.disabled = true; btn.textContent = 'A guardar…';
+    try {
+      const res = await fetch('/api/door-materials', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ materials: values })
+      });
+      if (!res.ok) throw new Error('save failed');
+      toast('Lista de materiais guardada', 'success');
+    } catch (err) {
+      showError(err, 'Não foi possível guardar a lista de materiais.');
+    } finally {
+      btn.disabled = false; btn.textContent = 'Guardar lista';
+    }
+  });
+}
+
+// ═══════════════════════════════════════════════════════════
 // INIT
 // ═══════════════════════════════════════════════════════════
 function init() {
@@ -1904,7 +2271,32 @@ function init() {
   // Auth init
   loadSavedAuth();
 
-  $('#user-btn')?.addEventListener('click', () => {
+  // Topbar user menu — tapping the pill opens a small dropdown (Definições
+  // / Admin / Sair) instead of jumping straight to a logout confirm.
+  const userMenu = $('#user-menu');
+  function closeUserMenu() { if (userMenu) userMenu.dataset.open = 'false'; }
+  $('#user-btn')?.addEventListener('click', e => {
+    e.stopPropagation();
+    if (!userMenu) return;
+    userMenu.dataset.open = userMenu.dataset.open === 'true' ? 'false' : 'true';
+  });
+  document.addEventListener('click', e => {
+    if (userMenu && userMenu.dataset.open === 'true' && !userMenu.contains(e.target) && e.target.id !== 'user-btn') {
+      closeUserMenu();
+    }
+  });
+  $('#settings-menu-item')?.addEventListener('click', () => {
+    closeUserMenu();
+    renderSettings();
+    setView('settings');
+  });
+  $('#admin-menu-item')?.addEventListener('click', () => {
+    closeUserMenu();
+    setView('admin');
+    renderAdminPanel();
+  });
+  $('#logout-menu-item')?.addEventListener('click', () => {
+    closeUserMenu();
     if (confirm(`Sair como ${auth.user?.name}?`)) clearAuth();
   });
 
