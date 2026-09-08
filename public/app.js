@@ -1050,18 +1050,28 @@ async function showItemSearchOverlay() {
       return;
     }
 
-    results.innerHTML = filtered.map(item => `
+    results.innerHTML = filtered.map(item => {
+      const disp = item.disponivel ?? item.stock;
+      const low  = disp !== null && disp <= 0;
+      return `
       <button class="browse-row" data-sku="${item.sku}" style="margin-bottom:6px">
         <div class="browse-row__main">
           <div class="browse-row__sku">${item.sku} · ${item.familia}</div>
           <div class="browse-row__desc">${item.descricao}</div>
           <div class="browse-row__dims">${fmtNumber(item.comprimento,0)}×${fmtNumber(item.largura,0)}×${fmtNumber(item.espessura,0)}mm</div>
         </div>
-        <div>
-          <span class="browse-row__stock-label">Preço</span>
-          <span class="browse-row__stock">${fmtCurrency(item.preco)}${item.unidade?'/'+item.unidade:''}</span>
+        <div style="text-align:right">
+          <div>
+            <span class="browse-row__stock-label">Preço</span>
+            <span class="browse-row__stock">${fmtCurrency(item.preco)}${item.unidade?'/'+item.unidade:''}</span>
+          </div>
+          <div style="margin-top:4px">
+            <span class="browse-row__stock-label">Disp.</span>
+            <span class="browse-row__stock" data-low="${low}">${fmtNumber(disp, 1)}</span>
+          </div>
         </div>
-      </button>`).join('') + `
+      </button>`;
+    }).join('') + `
       <button class="add-item-btn" data-action="new-product">
         <svg viewBox="0 0 24 24" width="16" height="16"><path d="M12 5v14m-7-7h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>
         Adicionar novo produto

@@ -6,7 +6,7 @@
 // the Etiquetas sheet by the quantity picked. Logs both changes.
 
 const { updateLinePicked } = require('../lib/orders');
-const { findItemBySku, updateItemFields, appendLogEntry } = require('../lib/sheets');
+const { findItemBySku, updateItemFields, appendLogEntry, adjustReservado } = require('../lib/sheets');
 
 module.exports = async (req, res) => {
   if (req.method !== 'POST') {
@@ -51,6 +51,16 @@ module.exports = async (req, res) => {
         newValue: newStock,
         note: `Separação encomenda ${orderId} (${qty} ${item.unidade || 'un'} = ${piecesPicked.toFixed(3)} un)`
       });
+
+      // This portion is no longer "ordered but not yet on the truck" — it's
+      // now actually off the shelf, so release the matching reservation.
+      // STOCK and RESERVADO both drop by piecesPicked, so "available"
+      // (STOCK - RESERVADO) doesn't move here — the alert-worthy crossing,
+      // if any, already happened when the order was reserved (see
+      // lib/orders.js), so there's no low-stock check to run in this path.
+      await adjustReservado(item, -piecesPicked).catch((err) =>
+        console.error(`Failed to release reservation for ${sku} on pick (order ${orderId}):`, err)
+      );
     }
 
     res.status(200).json({ ok: true, orderId, sku, qtyPicked: qty });
