@@ -125,6 +125,8 @@ const orderState = {
   newOrderClient: null,
   newOrderType: 'Normal',
   filterActive: true,
+  loaded: false, // true once loadOrders() has resolved at least once — lets
+                 // the Home view tell "still loading" apart from "genuinely zero"
 };
 
 // ═══════════════════════════════════════════════════════════
@@ -161,6 +163,7 @@ window.addEventListener('popstate', () => {
   setView(prev, { pushHistory: false });
   if (prev === 'orders') renderOrdersList();
   if (prev === 'browse') renderBrowseList($('#browse-search')?.value || '');
+  if (prev === 'home') renderHome();
 });
 
 // ═══════════════════════════════════════════════════════════
@@ -207,6 +210,20 @@ function fmtNumber(n, decimals = 2) {
 function fmtCurrency(n) {
   if (n === null || n === undefined || Number.isNaN(n)) return '—';
   return n.toLocaleString('pt-PT', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
+}
+
+// Shimmering row placeholders shown in place of plain "A carregar…" text
+// while a list is still fetching (see app.css's .skeleton / .skeleton-row).
+function skeletonRows(count = 5) {
+  const row = `
+    <div class="skeleton-row">
+      <div class="skeleton-row__main">
+        <div class="skeleton skeleton-row__line skeleton-row__line--wide"></div>
+        <div class="skeleton skeleton-row__line skeleton-row__line--mid"></div>
+      </div>
+      <div class="skeleton skeleton-row__stock"></div>
+    </div>`;
+  return row.repeat(count);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -574,7 +591,7 @@ function renderBrowseList(query) {
   if (!list) return;
 
   if (state.items.length === 0) {
-    list.innerHTML = `<div class="browse__loading">A carregar artigos…</div>`;
+    list.innerHTML = skeletonRows(6);
     return;
   }
 
@@ -649,6 +666,7 @@ async function loadOrders({ silent = false } = {}) {
     const [od, cd] = await Promise.all([apiGet('/api/orders'), apiGet('/api/clients')]);
     orderState.orders  = od.orders  || [];
     orderState.clients = cd.clients || [];
+    orderState.loaded  = true;
     return orderState.orders;
   } catch (err) {
     if (!silent) toast('Erro ao carregar encomendas', 'error');
@@ -661,6 +679,29 @@ async function loadOrders({ silent = false } = {}) {
 // ORDERS LIST
 // ═══════════════════════════════════════════════════════════
 function isActiveOrder(o) { return !['Concluído','Cancelado'].includes(o.status); }
+
+// Shared by the Orders list and the Home dashboard preview, so the two
+// never drift into slightly different card markup.
+function renderOrderCardHTML(order) {
+  const totalLines  = order.lines.length;
+  const pickedLines = order.lines.filter(l => l.qtyPicked >= l.qtyOrdered).length;
+  const pct         = totalLines > 0 ? Math.round((pickedLines / totalLines) * 100) : 0;
+  const complete    = pickedLines === totalLines && totalLines > 0;
+  const date        = order.createdAt ? new Date(order.createdAt).toLocaleDateString('pt-PT') : '';
+
+  return `
+    <button class="order-card" data-order-id="${order.orderId}">
+      <div class="order-card__top">
+        <span class="order-card__id">${order.orderId}${order.orderType === 'Portas' ? ' <span class="order-card__type-badge">Portas</span>' : ''}</span>
+        <span class="order-card__status" data-status="${order.status}">${order.status}</span>
+      </div>
+      <div class="order-card__client">${order.clientName || '—'}</div>
+      <div class="order-card__meta">${totalLines} artigo${totalLines !== 1 ? 's' : ''} · ${date}${order.salesperson ? ' · ' + order.salesperson : ''}</div>
+      <div class="order-card__progress">
+        <div class="order-card__progress-bar" data-complete="${complete}" style="width:${pct}%"></div>
+      </div>
+    </button>`;
+}
 
 function renderOrdersList() {
   const list = $('#orders-list');
@@ -701,26 +742,84 @@ function renderOrdersList() {
     return new Date(b.createdAt) - new Date(a.createdAt);
   });
 
-  list.innerHTML = backorderBanner + sorted.map(order => {
-    const totalLines  = order.lines.length;
-    const pickedLines = order.lines.filter(l => l.qtyPicked >= l.qtyOrdered).length;
-    const pct         = totalLines > 0 ? Math.round((pickedLines / totalLines) * 100) : 0;
-    const complete    = pickedLines === totalLines && totalLines > 0;
-    const date        = order.createdAt ? new Date(order.createdAt).toLocaleDateString('pt-PT') : '';
+  list.innerHTML = backorderBanner + sorted.map(renderOrderCardHTML).join('');
+}
 
-    return `
-      <button class="order-card" data-order-id="${order.orderId}">
-        <div class="order-card__top">
-          <span class="order-card__id">${order.orderId}${order.orderType === 'Portas' ? ' <span class="order-card__type-badge">Portas</span>' : ''}</span>
-          <span class="order-card__status" data-status="${order.status}">${order.status}</span>
-        </div>
-        <div class="order-card__client">${order.clientName || '—'}</div>
-        <div class="order-card__meta">${totalLines} artigo${totalLines !== 1 ? 's' : ''} · ${date}${order.salesperson ? ' · ' + order.salesperson : ''}</div>
-        <div class="order-card__progress">
-          <div class="order-card__progress-bar" data-complete="${complete}" style="width:${pct}%"></div>
-        </div>
-      </button>`;
-  }).join('');
+// ═══════════════════════════════════════════════════════════
+// HOME / DASHBOARD
+// ═══════════════════════════════════════════════════════════
+function renderHome() {
+  const panel = $('#home-panel');
+  if (!panel) return;
+
+  const user        = auth.user;
+  const isWarehouse = auth.isWarehouse();
+
+  // Same visibility rules as the Orders tab (see renderOrdersList), so the
+  // preview here never shows an order this user couldn't open from there.
+  let activeOrders = orderState.orders.filter(order => {
+    if (isWarehouse) return order.status === 'Em separação';
+    if (order.status === 'Rascunho') return order.salesperson === user?.name;
+    return isActiveOrder(order);
+  });
+  activeOrders = activeOrders.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const activePreview = activeOrders.slice(0, 3);
+
+  // Only items with a STOCK MÍNIMO set are ever considered "low" — same
+  // rule the email alert in lib/stockAlerts.js uses, so this list and the
+  // alerts never disagree about which SKUs matter.
+  const lowStock = state.items
+    .filter(i => i.stockMinimo !== null && i.stockMinimo !== undefined)
+    .filter(i => (i.disponivel ?? i.stock ?? 0) < i.stockMinimo)
+    .sort((a, b) => (a.disponivel ?? a.stock) - (b.disponivel ?? b.stock));
+
+  const ordersSection = !orderState.loaded
+    ? skeletonRows(2)
+    : activePreview.length === 0
+      ? `<div class="home-empty">Sem encomendas ativas</div>`
+      : activePreview.map(renderOrderCardHTML).join('');
+
+  const stockSection = state.items.length === 0
+    ? skeletonRows(3)
+    : lowStock.length === 0
+      ? `<div class="home-empty">Stock dentro dos mínimos definidos</div>`
+      : lowStock.slice(0, 8).map(item => {
+          const disp = item.disponivel ?? item.stock;
+          return `
+            <button class="browse-row" data-sku="${item.sku}">
+              <div class="browse-row__main">
+                <div class="browse-row__sku">${item.sku} · ${item.familia}</div>
+                <div class="browse-row__desc">${item.descricao}</div>
+              </div>
+              <div>
+                <span class="browse-row__stock-label">Mín. ${fmtNumber(item.stockMinimo, 0)}</span>
+                <span class="browse-row__stock" data-low="true">${fmtNumber(disp, 1)}</span>
+              </div>
+            </button>`;
+        }).join('');
+
+  panel.innerHTML = `
+    <div class="home-stats">
+      <div class="home-stat">
+        <div class="home-stat__value">${orderState.loaded ? activeOrders.length : '—'}</div>
+        <div class="home-stat__label">Encomendas ativas</div>
+      </div>
+      <div class="home-stat" data-warn="${lowStock.length > 0}">
+        <div class="home-stat__value">${state.items.length > 0 ? lowStock.length : '—'}</div>
+        <div class="home-stat__label">Stock baixo</div>
+      </div>
+    </div>
+
+    <div class="home-section">
+      <div class="section-label" style="padding:0 var(--sp-4)">Encomendas recentes</div>
+      <div class="home-section__list">${ordersSection}</div>
+    </div>
+
+    <div class="home-section">
+      <div class="section-label" style="padding:0 var(--sp-4)">Stock abaixo do mínimo</div>
+      <div class="home-section__list">${stockSection}</div>
+    </div>
+  `;
 }
 
 async function openOrderDetail(orderId) {
@@ -1052,7 +1151,10 @@ async function showItemSearchOverlay() {
 
     results.innerHTML = filtered.map(item => {
       const disp = item.disponivel ?? item.stock;
-      const low  = disp !== null && disp <= 0;
+      // Flag it red at zero, or below its STOCK MÍNIMO when one is set —
+      // same threshold the Home dashboard and the email alert use, so a
+      // vendedor sees the same "low" signal here while building an order.
+      const low  = disp !== null && (disp <= 0 || (item.stockMinimo != null && disp < item.stockMinimo));
       return `
       <button class="browse-row" data-sku="${item.sku}" style="margin-bottom:6px">
         <div class="browse-row__main">
@@ -1711,6 +1813,10 @@ function init() {
         renderResourcesPanel();
       }
       if (target === 'viaturas') renderViaturasPanel();
+      if (target === 'home') {
+        renderHome();
+        Promise.all([loadOrders({ silent: true }), loadAllItems()]).then(() => renderHome());
+      }
     });
   });
 
@@ -1720,6 +1826,21 @@ function init() {
     const card = e.target.closest('.order-card');
     if (!card) return;
     openOrderDetail(card.dataset.orderId);
+  });
+
+  // Home dashboard: recent-order cards behave like the Orders tab, and
+  // low-stock rows behave like the Inventário tab — same delegation
+  // pattern as those two, just scoped to #home-panel.
+  $('#home-panel')?.addEventListener('click', e => {
+    const card = e.target.closest('.order-card');
+    if (card) { openOrderDetail(card.dataset.orderId); return; }
+    const row = e.target.closest('.browse-row');
+    if (row) {
+      const item = state.items.find(i => i.sku === row.dataset.sku);
+      if (!item) return;
+      setView('item');
+      renderItemDetail(item);
+    }
   });
 
   // Orders filter

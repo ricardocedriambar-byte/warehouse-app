@@ -37,6 +37,11 @@
     <!-- Views -->
     <main class="views">
 
+      <!-- HOME / DASHBOARD VIEW -->
+      <section class="view" data-view="home">
+        <div id="home-panel"></div>
+      </section>
+
       <!-- SCAN VIEW -->
       <section class="view" data-view="scan" data-active="true">
         <div class="scan-stage" id="scan-stage">
@@ -116,12 +121,16 @@
 
     <!-- Tab bar -->
     <nav class="tabbar">
+      <button class="tabbar__btn" data-goto="home" aria-label="Início">
+        <svg viewBox="0 0 24 24" width="22" height="22"><path d="M4 10.5 12 4l8 6.5M6 9.5V19a1 1 0 0 0 1 1h3v-5h4v5h3a1 1 0 0 0 1-1V9.5" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+        <span>Início</span>
+      </button>
       <button class="tabbar__btn" data-goto="scan" aria-label="Digitalizar">
         <svg viewBox="0 0 24 24" width="22" height="22"><path d="M4 4h6v2H6v4H4V4zm10 0h6v6h-2V6h-4V4zM4 14h2v4h4v2H4v-6zm16 0h2v6h-6v-2h4v-4z" fill="currentColor"/></svg>
         <span>Digitalizar</span>
       </button>
       <button class="tabbar__btn" data-goto="orders" aria-label="Encomendas">
-        <svg viewBox="0 0 24 24" width="22" height="22"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/></svg>
+        <svg viewBox="0 0 24 24" width="22" height="22"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" fill="none"/></svg>
         <span>Encomendas</span>
       </button>
       <button class="tabbar__btn" data-goto="browse" aria-label="Inventário">
@@ -129,11 +138,11 @@
         <span>Inventário</span>
       </button>
       <button class="tabbar__btn" data-goto="recursos" aria-label="Recursos" id="recursos-tab-btn">
-        <svg viewBox="0 0 24 24" width="22" height="22"><path d="M6 2h9l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm8 1.5V8h4.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+        <svg viewBox="0 0 24 24" width="22" height="22"><path d="M6 2h9l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm8 1.5V8h4.5" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
         <span>Recursos</span>
       </button>
       <button class="tabbar__btn" data-goto="viaturas" aria-label="Viaturas">
-        <svg viewBox="0 0 24 24" width="22" height="22"><path d="M5 11l1.5-4.5A2 2 0 0 1 8.4 5h7.2a2 2 0 0 1 1.9 1.5L19 11m-14 0h14m-14 0a2 2 0 0 0-2 2v4h2m14-6a2 2 0 0 1 2 2v4h-2m-14 0v1.5A1.5 1.5 0 0 0 6.5 20h0A1.5 1.5 0 0 0 8 18.5V17m9 0v1.5a1.5 1.5 0 0 0 1.5 1.5h0a1.5 1.5 0 0 0 1.5-1.5V17m-12 0h12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+        <svg viewBox="0 0 24 24" width="22" height="22"><path d="M5 11l1.5-4.5A2 2 0 0 1 8.4 5h7.2a2 2 0 0 1 1.9 1.5L19 11m-14 0h14m-14 0a2 2 0 0 0-2 2v4h2m14-6a2 2 0 0 1 2 2v4h-2m-14 0v1.5A1.5 1.5 0 0 0 6.5 20h0A1.5 1.5 0 0 0 8 18.5V17m9 0v1.5a1.5 1.5 0 0 0 1.5 1.5h0a1.5 1.5 0 0 0 1.5-1.5V17m-12 0h12" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
         <span>Viaturas</span>
       </button>
     </nav>
@@ -145,7 +154,9 @@
         <div class="login-overlay__brand">Cedriambar</div>
         <div class="login-overlay__subtitle">Quem és tu?</div>
         <div id="user-list" class="login-overlay__list">
-          <div class="login-overlay__loading">A carregar…</div>
+          <div class="skeleton-row"><div class="skeleton skeleton-row__avatar"></div><div class="skeleton-row__main"><div class="skeleton skeleton-row__line skeleton-row__line--wide"></div><div class="skeleton skeleton-row__line skeleton-row__line--narrow"></div></div></div>
+          <div class="skeleton-row"><div class="skeleton skeleton-row__avatar"></div><div class="skeleton-row__main"><div class="skeleton skeleton-row__line skeleton-row__line--wide"></div><div class="skeleton skeleton-row__line skeleton-row__line--narrow"></div></div></div>
+          <div class="skeleton-row"><div class="skeleton skeleton-row__avatar"></div><div class="skeleton-row__main"><div class="skeleton skeleton-row__line skeleton-row__line--wide"></div><div class="skeleton skeleton-row__line skeleton-row__line--narrow"></div></div></div>
         </div>
       </div>
     </div>
