@@ -362,6 +362,10 @@ window.addEventListener('popstate', () => {
   if (prev === 'orders') renderOrdersList();
   if (prev === 'browse') renderBrowseList($('#browse-search')?.value || '');
   if (prev === 'home') renderHome();
+  if (prev === 'item' && state.currentItem) renderItemDetail(state.currentItem);
+  if (prev === 'order-pick' && orderState.currentOrder) {
+    renderOrderPick(orderState.currentOrder, orderState.currentOrder.status === 'Rascunho');
+  }
 });
 
 // ═══════════════════════════════════════════════════════════
@@ -499,6 +503,30 @@ function refreshVisibleItemViews() {
   } else if (viewName === 'item' && state.currentItem?.sku) {
     const fresh = state.items.find(i => i.sku === state.currentItem.sku);
     if (fresh) renderItemDetail(fresh);
+  } else if (viewName === 'home') {
+    renderHome();
+  }
+}
+
+// Same idea as refreshVisibleItemViews, but for order data — otherwise an
+// order edited by someone else (or directly in the sheet) stays stale on
+// the Orders list, an open order-pick screen, or the Home dashboard until
+// the person happens to navigate away and back.
+function refreshVisibleOrderViews() {
+  const activeView = document.querySelector('.view[data-active="true"]');
+  if (!activeView) return;
+  const viewName = activeView.dataset.view;
+
+  if (viewName === 'orders') {
+    renderOrdersList();
+  } else if (viewName === 'order-pick' && orderState.currentOrder?.orderId) {
+    const fresh = orderState.orders.find(o => o.orderId === orderState.currentOrder.orderId);
+    if (fresh) {
+      orderState.currentOrder = fresh;
+      renderOrderPick(fresh, fresh.status === 'Rascunho');
+    }
+  } else if (viewName === 'home') {
+    renderHome();
   }
 }
 
@@ -871,6 +899,7 @@ async function loadOrders({ silent = false } = {}) {
     orderState.orders  = od.orders  || [];
     orderState.clients = cd.clients || [];
     orderState.loaded  = true;
+    refreshVisibleOrderViews();
     return orderState.orders;
   } catch (err) {
     if (!silent) toast('Erro ao carregar encomendas', 'error');
@@ -2260,7 +2289,12 @@ async function renderSettings() {
   // avatarColor) — fetch the full record so email and notification
   // toggles aren't shown blank even when they were set previously.
   panel.innerHTML = `<button class="back-btn" id="settings-back-btn">‹ Voltar</button>` + skeletonRows(3);
-  panel.querySelector('#settings-back-btn').addEventListener('click', () => setView('home'));
+  // Settings can be opened from the user menu on any screen (Home, Scan,
+  // Encomendas, Inventário…), so "back" needs to return to wherever that
+  // was — not always Home. Going through the browser's own back
+  // navigation (which setView's pushState already recorded) re-uses the
+  // popstate handler that knows the real previous screen.
+  panel.querySelector('#settings-back-btn').addEventListener('click', () => history.back());
 
   let u = auth.user;
   try {
@@ -2333,7 +2367,12 @@ function renderSettingsForm(panel, u) {
     <button class="btn-primary" id="settings-save-btn" style="width:100%;margin-top:var(--sp-2)">Guardar</button>
   `;
 
-  panel.querySelector('#settings-back-btn').addEventListener('click', () => setView('home'));
+  // Settings can be opened from the user menu on any screen (Home, Scan,
+  // Encomendas, Inventário…), so "back" needs to return to wherever that
+  // was — not always Home. Going through the browser's own back
+  // navigation (which setView's pushState already recorded) re-uses the
+  // popstate handler that knows the real previous screen.
+  panel.querySelector('#settings-back-btn').addEventListener('click', () => history.back());
 
   let selectedColor = u.avatarColor || '';
   panel.querySelectorAll('.avatar-color-swatch').forEach(sw => {
@@ -2471,7 +2510,10 @@ function renderAdminPanel() {
     </div>
   `;
 
-  panel.querySelector('#admin-back-btn').addEventListener('click', () => setView('home'));
+  // Same reasoning as Settings' back button — Admin is also reachable from
+  // the user menu on any screen, so it needs real back navigation instead
+  // of always landing on Home.
+  panel.querySelector('#admin-back-btn').addEventListener('click', () => history.back());
 
   panel.querySelector('#admin-add-user-btn').addEventListener('click', async () => {
     const nameInput = $('#admin-new-name');
@@ -2750,11 +2792,14 @@ function init() {
     renderItemDetail(item);
   });
 
-  // Refresh
+  // Refresh — reloads both items and orders regardless of which screen is
+  // open. loadAllItems/loadOrders each re-render whatever screen depends
+  // on their data (see refreshVisibleItemViews/refreshVisibleOrderViews),
+  // so this single button fixes stale values everywhere instead of only
+  // on the inventory list.
   $('#refresh-btn')?.addEventListener('click', async () => {
     $('#refresh-btn').classList.add('spinning');
-    await loadAllItems();
-    renderBrowseList($('#browse-search')?.value || '');
+    await Promise.all([loadAllItems(), loadOrders()]);
     setTimeout(() => $('#refresh-btn').classList.remove('spinning'), 400);
   });
 
@@ -2837,17 +2882,22 @@ function init() {
     });
   }
 
-  // Background stock refresh — picks made by OTHER people (e.g. Bruno in
-  // the warehouse) change stock too, not just actions taken in this tab.
-  // Poll quietly every 30s so those changes show up without anyone having
-  // to hit the manual refresh button. Paused while the tab isn't visible,
-  // so it doesn't burn requests when the phone is locked or backgrounded.
+  // Background refresh — stock changed by OTHER people (e.g. Bruno in the
+  // warehouse), an order edited directly in the sheet, or a status changed
+  // by another salesperson all need to show up without anyone having to
+  // hit the manual refresh button or leave and re-enter the screen. Poll
+  // both items and orders quietly every 30s; paused while the tab isn't
+  // visible, so it doesn't burn requests when the phone is locked or
+  // backgrounded.
   const STOCK_POLL_MS = 30000;
   let stockPollTimer = null;
   function startStockPolling() {
     if (stockPollTimer) return;
     stockPollTimer = setInterval(() => {
-      if (auth.user && !document.hidden) loadAllItems({ silent: true });
+      if (auth.user && !document.hidden) {
+        loadAllItems({ silent: true });
+        loadOrders({ silent: true });
+      }
     }, STOCK_POLL_MS);
   }
   function stopStockPolling() {
@@ -2856,7 +2906,11 @@ function init() {
   }
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) stopStockPolling();
-    else { loadAllItems({ silent: true }); startStockPolling(); }
+    else {
+      loadAllItems({ silent: true });
+      loadOrders({ silent: true });
+      startStockPolling();
+    }
   });
   if (auth.user) startStockPolling();
 }
