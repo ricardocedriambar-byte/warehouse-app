@@ -2309,6 +2309,11 @@ function renderSettingsForm(panel, u) {
       </label>
       <p class="settings-hint">Recebidas como notificação push neste dispositivo (e por email, no caso de encomendas). Também é preciso ativar as notificações do browser — se ainda não o fizeste, sai e volta a entrar para veres esse pedido.</p>
       <button class="order-action-btn order-action-btn--draft" id="settings-test-push-btn" type="button" style="width:100%;margin-top:var(--sp-3)">Enviar notificação de teste</button>
+      ${u.role === 'admin' ? `
+      <p class="settings-hint">Estes dois simulam um alerta real (a quem tem cada opção ativada em Definições) — usa se o teste acima funcionar mas os alertas reais não chegarem.</p>
+      <button class="order-action-btn order-action-btn--draft" id="settings-test-orders-btn" type="button" style="width:100%;margin-top:var(--sp-2)">Simular alerta: encomenda enviada</button>
+      <button class="order-action-btn order-action-btn--draft" id="settings-test-lowstock-btn" type="button" style="width:100%;margin-top:var(--sp-2)">Simular alerta: stock baixo</button>
+      ` : ''}
     </div>
 
     <div class="section-label">Ecrã inicial ao entrar</div>
@@ -2394,6 +2399,40 @@ function renderSettingsForm(panel, u) {
       btn.disabled = false; btn.textContent = 'Enviar notificação de teste';
     }
   });
+
+  // "Simular alerta" — tests the REAL recipient-resolution path
+  // (getNotifyRecipientUserIds, driven by the Settings checkboxes above)
+  // instead of always targeting whoever clicked the button. Lets an admin
+  // tell, from one tap, whether "test push works but real alerts don't"
+  // is because nobody is actually opted in vs. something failing in the
+  // send itself.
+  const wireSimulateButton = (id, kind, label) => {
+    const btn = panel.querySelector(`#${id}`);
+    if (!btn) return;
+    btn.addEventListener('click', async () => {
+      btn.disabled = true; btn.textContent = 'A simular…';
+      try {
+        const result = await apiPatch('/api/push', { kind });
+        console.log(`push simulate (${kind}) result:`, result);
+        if (result.reason) {
+          toast(result.reason, result.ok ? 'success' : 'error');
+        } else if (result.ok) {
+          const okCount = result.devices.filter(d => d.ok).length;
+          const names = (result.recipients || []).join(', ');
+          toast(`Alerta chegaria a: ${names} (${okCount}/${result.devices.length} dispositivo${result.devices.length !== 1 ? 's' : ''} recebeu agora)`, 'success');
+        } else {
+          const firstError = (result.devices || []).find(d => !d.ok);
+          toast(firstError ? `Falha ao enviar a ${firstError.user}: ${firstError.error}` : 'Falha ao simular alerta', 'error');
+        }
+      } catch (err) {
+        showError(err, `Não foi possível simular o alerta de ${label}`);
+      } finally {
+        btn.disabled = false; btn.textContent = `Simular alerta: ${label}`;
+      }
+    });
+  };
+  wireSimulateButton('settings-test-orders-btn', 'orders', 'encomenda enviada');
+  wireSimulateButton('settings-test-lowstock-btn', 'lowstock', 'stock baixo');
 }
 
 // ═══════════════════════════════════════════════════════════

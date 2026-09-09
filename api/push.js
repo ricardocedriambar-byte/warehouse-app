@@ -16,10 +16,16 @@
 //                         to every device that user has subscribed, with
 //                         per-device success/failure detail — the "Enviar
 //                         notificação de teste" button in Settings
+//                       -> { kind: 'orders'|'lowstock' }  instead simulates
+//                         a real alert: resolves recipients the same way
+//                         the real alert code does (Settings opt-in flags)
+//                         and sends to their devices — the "Simular alerta"
+//                         buttons in Settings, for diagnosing "test works
+//                         but real alerts don't"
 //   DELETE /api/push  -> { endpoint }                removes a device's
 //                         subscription (e.g. notifications turned off)
 
-const { saveSubscription, removeSubscriptionByEndpoint, sendTestPush } = require('../lib/push');
+const { saveSubscription, removeSubscriptionByEndpoint, sendTestPush, sendTestPushByKind } = require('../lib/push');
 
 module.exports = async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
@@ -51,9 +57,23 @@ module.exports = async (req, res) => {
   }
 
   if (req.method === 'PATCH') {
-    const { userId } = req.body || {};
+    const { userId, kind } = req.body || {};
+    if (kind) {
+      if (kind !== 'orders' && kind !== 'lowstock') {
+        res.status(400).json({ error: 'kind deve ser "orders" ou "lowstock"' });
+        return;
+      }
+      try {
+        const result = await sendTestPushByKind(kind);
+        res.status(200).json(result);
+      } catch (err) {
+        console.error('push test-by-kind failed:', err);
+        res.status(500).json({ error: err.message });
+      }
+      return;
+    }
     if (!userId) {
-      res.status(400).json({ error: 'userId é obrigatório' });
+      res.status(400).json({ error: 'userId ou kind é obrigatório' });
       return;
     }
     try {
