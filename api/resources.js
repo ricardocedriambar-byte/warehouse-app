@@ -11,6 +11,7 @@
 // own /preview page — that embed always draws its own toolbar (page/zoom
 // controls) with no supported way to turn it off.
 
+const { Readable } = require('stream');
 const { getResources, fetchFileMedia } = require('../lib/resources');
 const { getFornecedorLogos } = require('../lib/sheets');
 
@@ -32,13 +33,38 @@ module.exports = async (req, res) => {
         res.status(driveRes.status === 404 ? 404 : 502).json({ error: 'Failed to load the PDF from Drive' });
         return;
       }
-      const buf = Buffer.from(await driveRes.arrayBuffer());
+
       res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Cache-Control', 'private, max-age=300');
-      res.status(200).send(buf);
+      const length = driveRes.headers.get('content-length');
+      if (length) res.setHeader('Content-Length', length);
+      // Cacheable at Vercel's edge, not just the requesting browser — a
+      // "Tabela de Preços" doesn't change intraday, so repeat opens (by
+      // anyone, not just the same person) can be served straight from
+      // the CDN instead of re-downloading from Drive and re-running the
+      // service-account auth every time, which was most of "takes too
+      // long to load a PDF" for a file more than one person opens.
+      // stale-while-revalidate means a slightly-stale copy still opens
+      // instantly while a fresh one is fetched in the background, so a
+      // real update in Drive still shows up within the hour.
+      res.setHeader('Cache-Control', 'public, max-age=300, s-maxage=3600, stale-while-revalidate=86400');
+      res.status(200);
+
+      // Stream Drive's bytes straight through to the client instead of
+      // buffering the whole file into memory first (the old
+      // `Buffer.from(await driveRes.arrayBuffer())`) — buffering meant
+      // nothing reached the browser until the ENTIRE file had already
+      // been downloaded from Drive into the function, effectively
+      // doubling the wait for anything but the smallest PDFs.
+      await new Promise((resolve, reject) => {
+        const nodeStream = Readable.fromWeb(driveRes.body);
+        nodeStream.on('error', reject);
+        res.on('error', reject);
+        res.on('finish', resolve);
+        nodeStream.pipe(res);
+      });
     } catch (err) {
       console.error(err);
-      res.status(500).json({ error: 'Failed to load the PDF from Drive' });
+      if (!res.headersSent) res.status(500).json({ error: 'Failed to load the PDF from Drive' });
     }
     return;
   }

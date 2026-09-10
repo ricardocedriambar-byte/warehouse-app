@@ -257,15 +257,22 @@ function loadPdfjs() {
   return pdfjsLibPromise;
 }
 
-// Renders every page of the PDF at `url` into its own <canvas>, stacked
-// vertically inside `pagesEl` — `scrollEl` (a plain overflow:auto box)
-// handles panning natively in both directions, so there's no manual
-// drag-to-pan code to keep in sync with scroll position. "Zoom" here
-// means re-rendering each page's canvas at a new resolution (crisp at
-// any level) rather than CSS-scaling a fixed-resolution image; pinch
-// gestures still get instant visual feedback via a temporary CSS
-// transform (see attachPdfPinchZoom) while the real re-render happens
-// once the gesture ends.
+// Renders the PDF at `url` into one <canvas> per page, stacked vertically
+// inside `pagesEl` — `scrollEl` (a plain overflow:auto box) handles
+// panning natively in both directions, so there's no manual drag-to-pan
+// code to keep in sync with scroll position. "Zoom" here means
+// re-rendering each page's canvas at a new resolution (crisp at any
+// level) rather than CSS-scaling a fixed-resolution image; pinch gestures
+// still get instant visual feedback via a temporary CSS transform (see
+// attachPdfPinchZoom) while the real re-render happens once the gesture
+// ends.
+//
+// Only page 1 (and whatever else is already on screen) is rendered up
+// front — the rest are just sized as blank placeholders and rendered
+// lazily via IntersectionObserver as they actually scroll into view.
+// Multi-page catalogs used to render every single page before showing
+// anything at all, which is a big part of why opening a longer document
+// felt slow even though only the first page was ever visible at first.
 async function createPdfCanvasViewer(scrollEl, pagesEl, url) {
   const pdfjsLib = await loadPdfjs();
   const loadingTask = pdfjsLib.getDocument(url);
@@ -277,18 +284,36 @@ async function createPdfCanvasViewer(scrollEl, pagesEl, url) {
   const pageCache = new Map(); // pageNumber -> pdf.js Page
   const canvases = [];
   const renderTasks = new Map(); // pageNumber -> RenderTask
+  const renderedAtLevel = new Map(); // pageNumber -> zoomLevel it was last actually painted at
   let onChangeCb = null;
   let destroyed = false;
+  let observer = null;
 
   async function getPage(n) {
     if (!pageCache.has(n)) pageCache.set(n, await pdf.getPage(n));
     return pageCache.get(n);
   }
 
-  async function renderPageAt(n, canvas, level) {
-    const page = await getPage(n);
+  function viewportFor(page, level) {
     const dpr = window.devicePixelRatio || 1;
-    const viewport = page.getViewport({ scale: fitScale * level * dpr });
+    return { viewport: page.getViewport({ scale: fitScale * level * dpr }), dpr };
+  }
+
+  // Sizes a page's canvas box immediately without painting it — keeps
+  // the scroll container's total height correct/stable right away so
+  // later pages don't jump around as they get rendered lazily.
+  async function sizePlaceholder(n) {
+    const canvas = canvases[n - 1];
+    const page = await getPage(n);
+    const { viewport, dpr } = viewportFor(page, zoomLevel);
+    canvas.style.width = `${Math.ceil(viewport.width / dpr)}px`;
+    canvas.style.height = `${Math.ceil(viewport.height / dpr)}px`;
+  }
+
+  async function renderPageAt(n, level) {
+    const canvas = canvases[n - 1];
+    const page = await getPage(n);
+    const { viewport, dpr } = viewportFor(page, level);
     canvas.width = Math.ceil(viewport.width);
     canvas.height = Math.ceil(viewport.height);
     canvas.style.width = `${Math.ceil(viewport.width / dpr)}px`;
@@ -302,6 +327,7 @@ async function createPdfCanvasViewer(scrollEl, pagesEl, url) {
     renderTasks.set(n, task);
     try {
       await task.promise;
+      renderedAtLevel.set(n, level);
     } catch (err) {
       if (err && err.name !== 'RenderingCancelledException') throw err;
     } finally {
@@ -309,8 +335,9 @@ async function createPdfCanvasViewer(scrollEl, pagesEl, url) {
     }
   }
 
-  async function renderAll(level) {
-    await Promise.all(canvases.map((canvas, i) => renderPageAt(i + 1, canvas, level)));
+  function renderIfStale(n, level) {
+    if (renderedAtLevel.get(n) !== level) return renderPageAt(n, level);
+    return Promise.resolve();
   }
 
   // First page decides the "100%" baseline: fills the visible width of
@@ -322,16 +349,41 @@ async function createPdfCanvasViewer(scrollEl, pagesEl, url) {
   for (let i = 1; i <= pdf.numPages; i++) {
     const canvas = document.createElement('canvas');
     canvas.className = 'resources-viewer__page';
+    canvas.dataset.page = i;
     pagesEl.appendChild(canvas);
     canvases.push(canvas);
   }
-  await renderAll(zoomLevel);
+
+  // Page 1 renders for real (it's what's visible the instant the viewer
+  // opens); everything else just gets sized so the layout/scrollbar is
+  // correct, then renders on demand as it scrolls near the viewport.
+  await renderPageAt(1, zoomLevel);
+  await Promise.all(canvases.slice(1).map((_, i) => sizePlaceholder(i + 2)));
   if (onChangeCb) onChangeCb(Math.round(zoomLevel * 100));
+
+  if ('IntersectionObserver' in window) {
+    observer = new IntersectionObserver(entries => {
+      entries.forEach(entry => {
+        if (!entry.isIntersecting) return;
+        renderIfStale(Number(entry.target.dataset.page), zoomLevel);
+      });
+    }, { root: scrollEl, rootMargin: '600px 0px' });
+    canvases.forEach(c => observer.observe(c));
+  } else {
+    // No IntersectionObserver (very old browser) — fall back to
+    // rendering everything up front like before, rather than leaving
+    // pages permanently blank.
+    await Promise.all(canvases.slice(1).map((_, i) => renderPageAt(i + 2, zoomLevel)));
+  }
 
   // Re-renders at `newLevel`, then adjusts scroll so the point under
   // (clientX, clientY) stays visually where it was — otherwise zooming
   // in always drifts toward the top-left corner of the page instead of
-  // wherever the user was actually looking/pinching.
+  // wherever the user was actually looking/pinching. Only pages already
+  // near the viewport are actually repainted immediately; the rest are
+  // just resized as placeholders and repaint lazily (same
+  // IntersectionObserver) once they're scrolled to — keeps zooming fast
+  // even on a long catalog instead of re-rendering every page every time.
   async function setZoomAtPoint(newLevel, clientX, clientY) {
     newLevel = Math.min(MAX, Math.max(MIN, newLevel));
     if (Math.abs(newLevel - zoomLevel) < 0.001) return;
@@ -340,7 +392,13 @@ async function createPdfCanvasViewer(scrollEl, pagesEl, url) {
     const contentY = scrollEl.scrollTop + (clientY - rect.top);
     const ratio = newLevel / zoomLevel;
     zoomLevel = newLevel;
-    await renderAll(zoomLevel);
+
+    await Promise.all(canvases.map((canvas, i) => {
+      const n = i + 1;
+      const cRect = canvas.getBoundingClientRect();
+      const nearViewport = cRect.bottom > rect.top - 600 && cRect.top < rect.bottom + 600;
+      return nearViewport ? renderPageAt(n, zoomLevel) : sizePlaceholder(n);
+    }));
     if (destroyed) return;
     scrollEl.scrollLeft = contentX * ratio - (clientX - rect.left);
     scrollEl.scrollTop = contentY * ratio - (clientY - rect.top);
@@ -363,6 +421,7 @@ async function createPdfCanvasViewer(scrollEl, pagesEl, url) {
     onChange: cb => { onChangeCb = cb; },
     destroy: () => {
       destroyed = true;
+      if (observer) observer.disconnect();
       renderTasks.forEach(t => t.cancel());
       loadingTask.destroy();
     }
