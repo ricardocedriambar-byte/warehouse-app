@@ -299,13 +299,26 @@ async function createPdfCanvasViewer(scrollEl, pagesEl, url) {
     return { viewport: page.getViewport({ scale: fitScale * level * dpr }), dpr };
   }
 
-  // Sizes a page's canvas box immediately without painting it — keeps
-  // the scroll container's total height correct/stable right away so
-  // later pages don't jump around as they get rendered lazily.
-  async function sizePlaceholder(n) {
+  // Sizes a page's canvas box immediately without painting it (or even
+  // fetching that page's own PDF structure — see below) — keeps the
+  // scroll container's total height correct/stable right away so later
+  // pages don't jump around as they get rendered lazily.
+  //
+  // Deliberately reuses PAGE 1's viewport instead of calling getPage(n)
+  // for this page: pdf.js has to parse each page's own object out of the
+  // file the first time it's asked for, and doing that for every single
+  // page up front (even just to read its size) meant a long catalog
+  // still did a burst of parsing work before the viewer felt "open" —
+  // exactly the slow-to-load complaint this lazy rendering was meant to
+  // fix in the first place. Real documents are overwhelmingly
+  // same-size-per-page, so this is right for the vast majority of PDFs;
+  // on the rare document with mixed page sizes, a placeholder is very
+  // briefly the wrong size and snaps to the correct one the moment that
+  // page actually renders (renderPageAt below does call getPage(n) for
+  // real, since it needs that page's true content either way).
+  function sizePlaceholder(n) {
     const canvas = canvases[n - 1];
-    const page = await getPage(n);
-    const { viewport, dpr } = viewportFor(page, zoomLevel);
+    const { viewport, dpr } = viewportFor(firstPage, zoomLevel);
     canvas.style.width = `${Math.ceil(viewport.width / dpr)}px`;
     canvas.style.height = `${Math.ceil(viewport.height / dpr)}px`;
   }
