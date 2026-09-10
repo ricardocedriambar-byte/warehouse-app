@@ -1661,6 +1661,15 @@ table.doors-doc__table tr:nth-child(even) td { background: #faf6ec; }
   flex: 1; position: relative; overflow: auto;
   background: #fff; touch-action: pan-x pan-y;
   -webkit-overflow-scrolling: touch;
+  /* Without this, hitting the top/bottom edge lets the scroll gesture
+     "chain" up to the app shell behind this fixed overlay — which has
+     overscroll-behavior: none to block pull-to-refresh — and on some
+     Android/Chrome builds that swallows the rest of the touch sequence
+     instead of cleanly stopping, so the next swipe (e.g. scrolling back
+     up after reaching the bottom) doesn't register. `contain` keeps the
+     whole gesture local to this element, same fix already used for the
+     admin panel's scroll area above. */
+  overscroll-behavior: contain;
 }
 .resources-viewer__pages {
   min-height: 100%;

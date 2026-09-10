@@ -389,11 +389,17 @@ function attachPdfPinchZoom(scrollEl, pagesEl, viewer) {
     };
   }
 
+  // Pointer capture is only taken once a second finger joins (i.e. once
+  // this is actually a pinch) — capturing on every single touchstart used
+  // to break native single-finger scrolling on some Android/Chrome builds
+  // (the browser would stop handing off the pan gesture once the pointer
+  // was captured), which is what made the page get "stuck" and unable to
+  // scroll back up after reaching the bottom.
   scrollEl.addEventListener('pointerdown', e => {
     if (e.pointerType !== 'touch') return;
-    scrollEl.setPointerCapture(e.pointerId);
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (pointers.size === 2) {
+      pointers.forEach((_, id) => { try { scrollEl.setPointerCapture(id); } catch {} });
       const pts = [...pointers.values()];
       pinchStartDist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) || 1;
       const mid = { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };

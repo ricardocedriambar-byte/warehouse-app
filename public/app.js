@@ -2803,13 +2803,34 @@ function init() {
     setTimeout(() => $('#refresh-btn').classList.remove('spinning'), 400);
   });
 
-  // Pull-to-refresh prevention
+  // Pull-to-refresh prevention — only kicks in when the thing actually
+  // under the finger has nowhere left to scroll upward. This used to
+  // always check the current tab's outer .view element, which was fine
+  // as long as every scrollable area WAS that .view — but overlays like
+  // the Recursos PDF viewer (public/resources.js) scroll their own nested
+  // container instead, and that container's scrollTop has nothing to do
+  // with the (permanently 0) outer view's. Checking the outer view there
+  // made this guard fire on every downward drag inside the PDF viewer
+  // once it was scrolled down at all, which blocked scrolling back up —
+  // it looked like the page was "stuck" at the bottom. Walking up from
+  // the actual touch target to the nearest scrollable ancestor fixes this
+  // PDF viewer and any future nested scroll area the same way.
+  function nearestScrollableAncestor(el) {
+    let node = el;
+    while (node && node !== document.body && node !== document.documentElement) {
+      const style = getComputedStyle(node);
+      if (/(auto|scroll)/.test(style.overflowY) && node.scrollHeight > node.clientHeight) return node;
+      node = node.parentElement;
+    }
+    return document.querySelector('.view[data-active="true"]');
+  }
+
   let touchStartY = 0;
   document.addEventListener('touchstart', e => { touchStartY = e.touches[0].clientY; }, { passive: true });
   document.addEventListener('touchmove', e => {
-    const activeView = document.querySelector('.view[data-active="true"]');
-    if (!activeView) return;
-    if (e.touches[0].clientY > touchStartY && activeView.scrollTop <= 0) e.preventDefault();
+    const scrollable = nearestScrollableAncestor(e.target);
+    if (!scrollable) return;
+    if (e.touches[0].clientY > touchStartY && scrollable.scrollTop <= 0) e.preventDefault();
   }, { passive: false });
 
   // Auth init
