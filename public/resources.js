@@ -187,6 +187,20 @@ function renderFornecedorDocs(fornecedor) {
 // are handled ourselves here instead: a pinch/double-tap/button zoom on
 // the embedded frame (see attachZoomPan), and a "Partilhar" button that
 // hands Drive's normal /view link to the device's native share sheet.
+//
+// Drive also always draws its own toolbar (pop-out/print/download icons)
+// along the top of the /preview embed — there's no URL parameter or embed
+// option to turn it off, it's baked into the page Drive serves inside the
+// iframe. The only way to get rid of it from our side, since the iframe
+// is cross-origin (we can't reach into its DOM), is to crop it out: the
+// iframe is made taller than its visible window and shifted up by
+// DRIVE_TOOLBAR_CROP_PX, so that strip ends up physically outside the
+// clipped "crop" box and is never drawn. This is a best-effort pixel
+// value, not something Drive documents — if it doesn't line up exactly
+// on a given device (a sliver of the toolbar left showing, or a bit of
+// the PDF's own top cut off), adjust DRIVE_TOOLBAR_CROP_PX below.
+const DRIVE_TOOLBAR_CROP_PX = 56;
+
 function openResourceViewer(url, nome, fileId) {
   const root = document.getElementById('recursos-panel');
   if (!root) return;
@@ -202,7 +216,10 @@ function openResourceViewer(url, nome, fileId) {
       </div>
     </div>
     <div class="resources-viewer__stage" id="resources-viewer-stage">
-      <iframe class="resources-viewer__frame" id="resources-viewer-frame" src="${resEsc(url)}" allow="autoplay" allowfullscreen></iframe>
+      <div class="resources-viewer__crop" id="resources-viewer-crop">
+        <iframe class="resources-viewer__frame" id="resources-viewer-frame" src="${resEsc(url)}" allow="autoplay" allowfullscreen
+          style="top:-${DRIVE_TOOLBAR_CROP_PX}px; height:calc(100% + ${DRIVE_TOOLBAR_CROP_PX}px)"></iframe>
+      </div>
     </div>
     <div class="resources-viewer__zoom-controls">
       <button class="resources-viewer__zoom-btn" data-zoom="out" aria-label="Reduzir zoom">−</button>
@@ -217,8 +234,12 @@ function openResourceViewer(url, nome, fileId) {
   }
 
   const stage = overlay.querySelector('#resources-viewer-stage');
-  const frame = overlay.querySelector('#resources-viewer-frame');
-  const zoom = attachZoomPan(stage, frame);
+  // The zoom/pan transform is applied to the crop box (not the iframe
+  // directly) — it already carries the toolbar-hiding offset, and scaling
+  // it as one unit keeps that crop correct at every zoom level instead of
+  // the math having to account for the offset separately.
+  const crop = overlay.querySelector('#resources-viewer-crop');
+  const zoom = attachZoomPan(stage, crop);
   const zoomLabel = overlay.querySelector('.resources-viewer__zoom-btn--reset');
   overlay.querySelectorAll('.resources-viewer__zoom-btn').forEach(btn => {
     btn.addEventListener('click', () => {

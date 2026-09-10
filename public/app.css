@@ -1658,10 +1658,20 @@ table.doors-doc__table tr:nth-child(even) td { background: #faf6ec; }
   flex: 1; position: relative; overflow: hidden;
   background: #fff; touch-action: none;
 }
-.resources-viewer__frame {
-  position: absolute; inset: 0; width: 100%; height: 100%;
-  border: none; background: #fff;
+/* The "crop" wrapper clips out Google Drive's own toolbar strip, which
+   renders at a fixed height inside the /preview iframe with no API to
+   disable it — the iframe is made taller than this wrapper and shifted
+   up (see DRIVE_TOOLBAR_CROP_PX / resources.js), so the toolbar renders
+   physically above the visible clipped area. Pinch/pan zoom is applied
+   here (not on the iframe) so the crop offset and the zoom transform
+   compose as one unit. */
+.resources-viewer__crop {
+  position: absolute; inset: 0; overflow: hidden;
   transform-origin: 0 0;
+}
+.resources-viewer__frame {
+  position: absolute; left: 0; width: 100%;
+  border: none; background: #fff;
 }
 .resources-viewer__zoom-controls {
   position: absolute; left: 50%; bottom: calc(var(--sp-4) + env(safe-area-inset-bottom));
