@@ -1650,29 +1650,33 @@ table.doors-doc__table tr:nth-child(even) td { background: #faf6ec; }
 }
 .resources-viewer__close:active, .resources-viewer__share:active { background: var(--s4); }
 
-/* The "stage" clips the zoomed/panned iframe and owns the pinch/drag
-   touch handling (see attachZoomPan in resources.js) — the iframe itself
-   is absolutely positioned inside it so a CSS transform can scale/move
-   it freely without affecting layout. */
-.resources-viewer__stage {
-  flex: 1; position: relative; overflow: hidden;
-  background: #fff; touch-action: none;
+/* The pages render into their own canvases (see createPdfCanvasViewer in
+   resources.js) — this box just scrolls them natively in both directions,
+   which is also what handles panning once zoomed in, so there's no manual
+   drag-to-pan code to keep in sync with it. touch-action excludes Chrome's
+   own pinch-zoom-the-page gesture so a two-finger touch reaches our
+   pointer handlers instead (see attachPdfPinchZoom) — single-finger
+   scrolling stays native. */
+.resources-viewer__scroll {
+  flex: 1; position: relative; overflow: auto;
+  background: #fff; touch-action: pan-x pan-y;
+  -webkit-overflow-scrolling: touch;
 }
-/* The "crop" wrapper clips out Google Drive's own toolbar strip, which
-   renders at a fixed height inside the /preview iframe with no API to
-   disable it — the iframe is made taller than this wrapper and shifted
-   up (see DRIVE_TOOLBAR_CROP_PX / resources.js), so the toolbar renders
-   physically above the visible clipped area. Pinch/pan zoom is applied
-   here (not on the iframe) so the crop offset and the zoom transform
-   compose as one unit. */
-.resources-viewer__crop {
-  position: absolute; inset: 0; overflow: hidden;
+.resources-viewer__pages {
+  min-height: 100%;
+  padding: var(--sp-3) 0;
   transform-origin: 0 0;
 }
-.resources-viewer__frame {
-  position: absolute; left: 0; width: 100%;
-  border: none; background: #fff;
+.resources-viewer__page {
+  display: block; margin: 0 auto var(--sp-3) auto;
+  box-shadow: 0 1px 6px rgba(0,0,0,0.15);
 }
+.resources-viewer__status {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  width: 100%; box-sizing: border-box; padding: 0 var(--sp-5);
+  text-align: center; color: var(--t3); font-family: var(--mono); font-size: 13px;
+}
+.resources-viewer__status--error { color: var(--danger); }
 .resources-viewer__zoom-controls {
   position: absolute; left: 50%; bottom: calc(var(--sp-4) + env(safe-area-inset-bottom));
   transform: translateX(-50%);

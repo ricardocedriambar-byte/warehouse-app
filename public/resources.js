@@ -158,7 +158,7 @@ function renderFornecedorDocs(fornecedor) {
   const docs = resourcesGroups.get(fornecedor) || [];
 
   list.innerHTML = docs.map(item => `
-    <button class="resources-row" data-url="${resEsc(item.url)}" data-nome="${resEsc(item.nome)}" data-file-id="${resEsc(item.fileId || '')}">
+    <button class="resources-row" data-nome="${resEsc(item.nome)}" data-file-id="${resEsc(item.fileId || '')}">
       <span class="resources-row__icon">📄</span>
       <span class="resources-row__main">
         <span class="resources-row__nome">${resEsc(item.nome)}</span>
@@ -171,39 +171,26 @@ function renderFornecedorDocs(fornecedor) {
   `).join('');
 
   list.querySelectorAll('.resources-row').forEach(btn => {
-    btn.addEventListener('click', () => openResourceViewer(btn.dataset.url, btn.dataset.nome, btn.dataset.fileId));
+    btn.addEventListener('click', () => openResourceViewer(btn.dataset.fileId, btn.dataset.nome));
   });
 }
 
-// Opens the PDF in an in-app iframe overlay rather than navigating out
-// to drive.google.com — on mobile, top-level navigation to a Drive link
-// gets intercepted by the Drive app and forces a Google sign-in prompt.
-// An iframe embed never triggers that handoff, and since Google serves
-// the bytes directly (not through our own API), there's no file-size
-// limit either.
+// Opens the PDF rendered by our own viewer (pdf.js) instead of embedding
+// Drive's /preview page. That embed always draws its own toolbar — page
+// controls, a floating "Página / zoom / print" pill that can appear
+// anywhere over the document, not just a fixed strip along one edge —
+// and since it's a cross-origin iframe there is no way to reach into its
+// DOM to hide any of it: cropping a fixed offset only worked as long as
+// the unwanted UI stayed put along the top, and it doesn't. Rendering the
+// PDF ourselves means there is no Drive UI to fight in the first place.
 //
-// Drive's own /preview embed doesn't expose enough zoom to comfortably
-// read small print on a phone, and it has no share option at all — both
-// are handled ourselves here instead: a pinch/double-tap/button zoom on
-// the embedded frame (see attachZoomPan), and a "Partilhar" button that
-// hands Drive's normal /view link to the device's native share sheet.
-//
-// Drive also always draws its own toolbar (pop-out/print/download icons)
-// along the top of the /preview embed — there's no URL parameter or embed
-// option to turn it off, it's baked into the page Drive serves inside the
-// iframe. The only way to get rid of it from our side, since the iframe
-// is cross-origin (we can't reach into its DOM), is to crop it out: the
-// iframe is made taller than its visible window and shifted up by
-// DRIVE_TOOLBAR_CROP_PX, so that strip ends up physically outside the
-// clipped "crop" box and is never drawn. This is a best-effort pixel
-// value, not something Drive documents — if it doesn't line up exactly
-// on a given device (a sliver of the toolbar left showing, or a bit of
-// the PDF's own top cut off), adjust DRIVE_TOOLBAR_CROP_PX below.
-const DRIVE_TOOLBAR_CROP_PX = 56;
-
-function openResourceViewer(url, nome, fileId) {
+// The bytes come from our own /api/resources?fileId=... (a thin proxy to
+// Drive's `files.get?alt=media`, see lib/resources.js) so the request
+// stays same-origin — no CORS, no top-level navigation to drive.google.com
+// that could trigger a Drive-app handoff or sign-in prompt on mobile.
+async function openResourceViewer(fileId, nome) {
   const root = document.getElementById('recursos-panel');
-  if (!root) return;
+  if (!root || !fileId) return;
 
   const overlay = document.createElement('div');
   overlay.className = 'resources-viewer';
@@ -211,15 +198,13 @@ function openResourceViewer(url, nome, fileId) {
     <div class="resources-viewer__header">
       <span class="resources-viewer__title">${resEsc(nome)}</span>
       <div class="resources-viewer__actions">
-        ${fileId ? `<button class="resources-viewer__share" aria-label="Partilhar">🔗</button>` : ''}
+        <button class="resources-viewer__share" aria-label="Partilhar">🔗</button>
         <button class="resources-viewer__close" aria-label="Fechar">✕</button>
       </div>
     </div>
-    <div class="resources-viewer__stage" id="resources-viewer-stage">
-      <div class="resources-viewer__crop" id="resources-viewer-crop">
-        <iframe class="resources-viewer__frame" id="resources-viewer-frame" src="${resEsc(url)}" allow="autoplay" allowfullscreen
-          style="top:-${DRIVE_TOOLBAR_CROP_PX}px; height:calc(100% + ${DRIVE_TOOLBAR_CROP_PX}px)"></iframe>
-      </div>
+    <div class="resources-viewer__scroll" id="resources-viewer-scroll">
+      <div class="resources-viewer__pages" id="resources-viewer-pages"></div>
+      <div class="resources-viewer__status" id="resources-viewer-status">A carregar documento…</div>
     </div>
     <div class="resources-viewer__zoom-controls">
       <button class="resources-viewer__zoom-btn" data-zoom="out" aria-label="Reduzir zoom">−</button>
@@ -227,140 +212,241 @@ function openResourceViewer(url, nome, fileId) {
       <button class="resources-viewer__zoom-btn" data-zoom="in" aria-label="Aumentar zoom">+</button>
     </div>
   `;
-  overlay.querySelector('.resources-viewer__close').addEventListener('click', () => overlay.remove());
 
-  if (fileId) {
-    overlay.querySelector('.resources-viewer__share').addEventListener('click', () => shareResource(fileId, nome));
-  }
-
-  const stage = overlay.querySelector('#resources-viewer-stage');
-  // The zoom/pan transform is applied to the crop box (not the iframe
-  // directly) — it already carries the toolbar-hiding offset, and scaling
-  // it as one unit keeps that crop correct at every zoom level instead of
-  // the math having to account for the offset separately.
-  const crop = overlay.querySelector('#resources-viewer-crop');
-  const zoom = attachZoomPan(stage, crop);
-  const zoomLabel = overlay.querySelector('.resources-viewer__zoom-btn--reset');
-  overlay.querySelectorAll('.resources-viewer__zoom-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      if (btn.dataset.zoom === 'in') zoom.zoomIn();
-      else if (btn.dataset.zoom === 'out') zoom.zoomOut();
-      else zoom.reset();
-    });
-  });
-  zoom.onChange(pct => { zoomLabel.textContent = `${pct}%`; });
+  let pdfViewer = null;
+  const closeOverlay = () => { if (pdfViewer) pdfViewer.destroy(); overlay.remove(); };
+  overlay.querySelector('.resources-viewer__close').addEventListener('click', closeOverlay);
+  overlay.querySelector('.resources-viewer__share').addEventListener('click', () => shareResource(fileId, nome));
 
   root.appendChild(overlay);
+
+  const scrollEl = overlay.querySelector('#resources-viewer-scroll');
+  const pagesEl = overlay.querySelector('#resources-viewer-pages');
+  const statusEl = overlay.querySelector('#resources-viewer-status');
+  const zoomLabel = overlay.querySelector('.resources-viewer__zoom-btn--reset');
+
+  try {
+    pdfViewer = await createPdfCanvasViewer(scrollEl, pagesEl, `/api/resources?fileId=${encodeURIComponent(fileId)}`);
+  } catch (err) {
+    console.error('Falha ao abrir o PDF', err);
+    statusEl.textContent = 'Não foi possível abrir este documento. Usa o botão de partilhar para o abrir noutro sítio.';
+    statusEl.classList.add('resources-viewer__status--error');
+    return;
+  }
+  statusEl.remove();
+
+  overlay.querySelectorAll('.resources-viewer__zoom-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (btn.dataset.zoom === 'in') pdfViewer.zoomIn();
+      else if (btn.dataset.zoom === 'out') pdfViewer.zoomOut();
+      else pdfViewer.reset();
+    });
+  });
+  pdfViewer.onChange(pct => { zoomLabel.textContent = `${pct}%`; });
+  attachPdfPinchZoom(scrollEl, pagesEl, pdfViewer);
 }
 
-// Drive's PDF is rendered inside a cross-origin iframe, so we can't reach
-// into its own viewer to add zoom — instead this scales/pans the iframe
-// element itself (a CSS transform on our side of the boundary), which
-// works the same regardless of what Drive's embed does or doesn't expose:
-// pinch with two fingers, double-tap to jump between 100%/250%, drag to
-// pan once zoomed in, or use the +/−/100% buttons. While zoomed in the
-// iframe's own pointer events are disabled so our drag-to-pan isn't
-// fighting the PDF viewer underneath; at 100% it's handed back so Drive's
-// own scrolling/controls work normally.
-function attachZoomPan(stage, frame) {
-  const MIN = 1, MAX = 4, STEP = 0.6;
-  let scale = 1, panX = 0, panY = 0;
-  const pointers = new Map();
-  let pinchStartDist = 0, pinchStartScale = 1;
-  let dragStart = null;
+let pdfjsLibPromise = null;
+function loadPdfjs() {
+  if (!pdfjsLibPromise) {
+    pdfjsLibPromise = import('/vendor/pdfjs/pdf.min.mjs').then(lib => {
+      lib.GlobalWorkerOptions.workerSrc = '/vendor/pdfjs/pdf.worker.min.mjs';
+      return lib;
+    });
+  }
+  return pdfjsLibPromise;
+}
+
+// Renders every page of the PDF at `url` into its own <canvas>, stacked
+// vertically inside `pagesEl` — `scrollEl` (a plain overflow:auto box)
+// handles panning natively in both directions, so there's no manual
+// drag-to-pan code to keep in sync with scroll position. "Zoom" here
+// means re-rendering each page's canvas at a new resolution (crisp at
+// any level) rather than CSS-scaling a fixed-resolution image; pinch
+// gestures still get instant visual feedback via a temporary CSS
+// transform (see attachPdfPinchZoom) while the real re-render happens
+// once the gesture ends.
+async function createPdfCanvasViewer(scrollEl, pagesEl, url) {
+  const pdfjsLib = await loadPdfjs();
+  const loadingTask = pdfjsLib.getDocument(url);
+  const pdf = await loadingTask.promise;
+
+  const MIN = 0.5, MAX = 4, STEP = 0.5;
+  let zoomLevel = 1;
+  let fitScale = 1; // scale (CSS px per PDF point) that makes page 1 fill the viewer's width at zoomLevel 1
+  const pageCache = new Map(); // pageNumber -> pdf.js Page
+  const canvases = [];
+  const renderTasks = new Map(); // pageNumber -> RenderTask
   let onChangeCb = null;
+  let destroyed = false;
 
-  function apply() {
-    frame.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
-    frame.style.pointerEvents = scale > 1.01 ? 'none' : 'auto';
-    if (onChangeCb) onChangeCb(Math.round(scale * 100));
+  async function getPage(n) {
+    if (!pageCache.has(n)) pageCache.set(n, await pdf.getPage(n));
+    return pageCache.get(n);
   }
 
-  function clampPan() {
-    const rect = stage.getBoundingClientRect();
-    const maxX = Math.max(0, rect.width * scale - rect.width);
-    const maxY = Math.max(0, rect.height * scale - rect.height);
-    panX = Math.min(0, Math.max(-maxX, panX));
-    panY = Math.min(0, Math.max(-maxY, panY));
+  async function renderPageAt(n, canvas, level) {
+    const page = await getPage(n);
+    const dpr = window.devicePixelRatio || 1;
+    const viewport = page.getViewport({ scale: fitScale * level * dpr });
+    canvas.width = Math.ceil(viewport.width);
+    canvas.height = Math.ceil(viewport.height);
+    canvas.style.width = `${Math.ceil(viewport.width / dpr)}px`;
+    canvas.style.height = `${Math.ceil(viewport.height / dpr)}px`;
+
+    const prevTask = renderTasks.get(n);
+    if (prevTask) prevTask.cancel();
+
+    const ctx = canvas.getContext('2d');
+    const task = page.render({ canvasContext: ctx, viewport });
+    renderTasks.set(n, task);
+    try {
+      await task.promise;
+    } catch (err) {
+      if (err && err.name !== 'RenderingCancelledException') throw err;
+    } finally {
+      if (renderTasks.get(n) === task) renderTasks.delete(n);
+    }
   }
 
-  // Keeps the point under (clientX, clientY) visually stationary while
-  // the scale changes — otherwise zooming in always drifts toward the
-  // top-left corner instead of the spot the user is actually looking at.
-  function setZoom(newScale, clientX, clientY) {
-    newScale = Math.min(MAX, Math.max(MIN, newScale));
-    const rect = stage.getBoundingClientRect();
-    const px = clientX - rect.left, py = clientY - rect.top;
-    panX = px - (px - panX) * (newScale / scale);
-    panY = py - (py - panY) * (newScale / scale);
-    scale = newScale;
-    if (scale <= MIN) { scale = MIN; panX = 0; panY = 0; }
-    clampPan();
-    apply();
+  async function renderAll(level) {
+    await Promise.all(canvases.map((canvas, i) => renderPageAt(i + 1, canvas, level)));
   }
 
-  function stageCenter() {
-    const rect = stage.getBoundingClientRect();
+  // First page decides the "100%" baseline: fills the visible width of
+  // the scroll viewport, same as opening any document at fit-width.
+  const firstPage = await getPage(1);
+  const baseViewport = firstPage.getViewport({ scale: 1 });
+  fitScale = Math.max(0.1, scrollEl.clientWidth / baseViewport.width);
+
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const canvas = document.createElement('canvas');
+    canvas.className = 'resources-viewer__page';
+    pagesEl.appendChild(canvas);
+    canvases.push(canvas);
+  }
+  await renderAll(zoomLevel);
+  if (onChangeCb) onChangeCb(Math.round(zoomLevel * 100));
+
+  // Re-renders at `newLevel`, then adjusts scroll so the point under
+  // (clientX, clientY) stays visually where it was — otherwise zooming
+  // in always drifts toward the top-left corner of the page instead of
+  // wherever the user was actually looking/pinching.
+  async function setZoomAtPoint(newLevel, clientX, clientY) {
+    newLevel = Math.min(MAX, Math.max(MIN, newLevel));
+    if (Math.abs(newLevel - zoomLevel) < 0.001) return;
+    const rect = scrollEl.getBoundingClientRect();
+    const contentX = scrollEl.scrollLeft + (clientX - rect.left);
+    const contentY = scrollEl.scrollTop + (clientY - rect.top);
+    const ratio = newLevel / zoomLevel;
+    zoomLevel = newLevel;
+    await renderAll(zoomLevel);
+    if (destroyed) return;
+    scrollEl.scrollLeft = contentX * ratio - (clientX - rect.left);
+    scrollEl.scrollTop = contentY * ratio - (clientY - rect.top);
+    if (onChangeCb) onChangeCb(Math.round(zoomLevel * 100));
+  }
+
+  function viewerCenter() {
+    const rect = scrollEl.getBoundingClientRect();
     return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
   }
 
-  stage.addEventListener('pointerdown', e => {
-    stage.setPointerCapture(e.pointerId);
+  return {
+    zoomIn: () => { const c = viewerCenter(); setZoomAtPoint(zoomLevel + STEP, c.x, c.y); },
+    zoomOut: () => { const c = viewerCenter(); setZoomAtPoint(zoomLevel - STEP, c.x, c.y); },
+    reset: () => { const c = viewerCenter(); setZoomAtPoint(1, c.x, c.y); },
+    setZoomAtPoint,
+    get zoomLevel() { return zoomLevel; },
+    get min() { return MIN; },
+    get max() { return MAX; },
+    onChange: cb => { onChangeCb = cb; },
+    destroy: () => {
+      destroyed = true;
+      renderTasks.forEach(t => t.cancel());
+      loadingTask.destroy();
+    }
+  };
+}
+
+// pdf.js re-renders at a new resolution on every zoom step (see
+// createPdfCanvasViewer), which is too slow to run continuously during a
+// pinch gesture — instead this gives instant feedback with a plain CSS
+// transform on the page stack while two fingers are down, then commits
+// one real re-render (crisp, at the final size) once they lift. Native
+// scrolling on `scrollEl` handles all panning, so there's nothing here
+// but the pinch and the double-tap-to-toggle-zoom shortcut.
+function attachPdfPinchZoom(scrollEl, pagesEl, viewer) {
+  const pointers = new Map();
+  let pinchStartDist = 0;
+  let pinchOrigin = null; // { x, y } in pagesEl's own (untransformed) content coordinates
+
+  function contentPoint(clientX, clientY) {
+    const rect = scrollEl.getBoundingClientRect();
+    return {
+      x: scrollEl.scrollLeft + (clientX - rect.left),
+      y: scrollEl.scrollTop + (clientY - rect.top)
+    };
+  }
+
+  scrollEl.addEventListener('pointerdown', e => {
+    if (e.pointerType !== 'touch') return;
+    scrollEl.setPointerCapture(e.pointerId);
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (pointers.size === 2) {
       const pts = [...pointers.values()];
       pinchStartDist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) || 1;
-      pinchStartScale = scale;
-      dragStart = null;
-    } else if (pointers.size === 1 && scale > 1.01) {
-      dragStart = { x: e.clientX - panX, y: e.clientY - panY };
+      const mid = { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
+      pinchOrigin = contentPoint(mid.x, mid.y);
+      pagesEl.style.transformOrigin = `${pinchOrigin.x}px ${pinchOrigin.y}px`;
     }
   });
 
-  stage.addEventListener('pointermove', e => {
+  scrollEl.addEventListener('pointermove', e => {
     if (!pointers.has(e.pointerId)) return;
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    if (pointers.size === 2) {
+    if (pointers.size === 2 && pinchOrigin) {
       const pts = [...pointers.values()];
       const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
-      const mid = { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
-      setZoom(pinchStartScale * (dist / pinchStartDist), mid.x, mid.y);
-    } else if (pointers.size === 1 && dragStart && scale > 1.01) {
-      panX = e.clientX - dragStart.x;
-      panY = e.clientY - dragStart.y;
-      clampPan();
-      apply();
+      const liveRatio = Math.min(viewer.max / viewer.zoomLevel, Math.max(viewer.min / viewer.zoomLevel, dist / pinchStartDist));
+      pagesEl.style.transform = `scale(${liveRatio})`;
     }
   });
 
-  function endPointer(e) {
+  function endPinch(e) {
+    const hadPinch = pointers.size === 2 && pinchOrigin;
     pointers.delete(e.pointerId);
-    if (pointers.size < 2) pinchStartDist = 0;
-    if (pointers.size === 0) dragStart = null;
+    if (hadPinch && pointers.size < 2) {
+      const transform = pagesEl.style.transform;
+      pagesEl.style.transform = '';
+      const m = /scale\(([\d.]+)\)/.exec(transform);
+      const liveRatio = m ? parseFloat(m[1]) : 1;
+      const rect = scrollEl.getBoundingClientRect();
+      viewer.setZoomAtPoint(
+        viewer.zoomLevel * liveRatio,
+        pinchOrigin.x - scrollEl.scrollLeft + rect.left,
+        pinchOrigin.y - scrollEl.scrollTop + rect.top
+      );
+      pinchOrigin = null;
+      pinchStartDist = 0;
+    }
   }
-  stage.addEventListener('pointerup', endPointer);
-  stage.addEventListener('pointercancel', endPointer);
+  scrollEl.addEventListener('pointerup', endPinch);
+  scrollEl.addEventListener('pointercancel', endPinch);
 
   let lastTapAt = 0, lastTapPos = null;
-  stage.addEventListener('pointerup', e => {
-    if (pointers.size > 0) return;
+  scrollEl.addEventListener('pointerup', e => {
+    if (e.pointerType !== 'touch' || pointers.size > 0) return;
     const now = Date.now();
     const closeToLastTap = lastTapPos && Math.hypot(e.clientX - lastTapPos.x, e.clientY - lastTapPos.y) < 30;
     if (now - lastTapAt < 350 && closeToLastTap) {
-      setZoom(scale > 1.5 ? MIN : 2.5, e.clientX, e.clientY);
+      viewer.setZoomAtPoint(viewer.zoomLevel > 1.5 ? 1 : 2.5, e.clientX, e.clientY);
       lastTapAt = 0;
     } else {
       lastTapAt = now;
       lastTapPos = { x: e.clientX, y: e.clientY };
     }
   });
-
-  return {
-    zoomIn: () => { const c = stageCenter(); setZoom(scale + STEP, c.x, c.y); },
-    zoomOut: () => { const c = stageCenter(); setZoom(scale - STEP, c.x, c.y); },
-    reset: () => { scale = 1; panX = 0; panY = 0; apply(); },
-    onChange: cb => { onChangeCb = cb; cb(100); }
-  };
 }
 
 // Hands the file's normal Drive link to the device's native share sheet
