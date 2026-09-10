@@ -12,19 +12,27 @@ let resourcesLogoOverrides = {}; // { fornecedor: url }, from the LogosFornecedo
 async function renderResourcesPanel() {
   const root = document.getElementById('recursos-panel');
   if (!root) return;
-  if (resourcesRendered) return;
-  resourcesRendered = true;
 
-  root.innerHTML = `
-    <div class="resources-view">
-      <div class="resources-view__header" id="resources-header">
-        <h2 class="resources-view__title">Recursos</h2>
+  // Build the shell (header + list container) only the first time — but
+  // always re-fetch below. Previously this whole function short-circuited
+  // after the first render (resourcesRendered), so a PDF added to Drive,
+  // or a supplier folder renamed, never showed up until the app was fully
+  // closed and reopened. Re-fetching on every visit to the tab fixes that,
+  // matching how Encomendas/Inventário already reload each time you open
+  // them instead of only once per page load.
+  if (!resourcesRendered) {
+    resourcesRendered = true;
+    root.innerHTML = `
+      <div class="resources-view">
+        <div class="resources-view__header" id="resources-header">
+          <h2 class="resources-view__title">Recursos</h2>
+        </div>
+        <div id="resources-list" class="resources-list">
+          <div class="resources__loading">A carregar recursos…</div>
+        </div>
       </div>
-      <div id="resources-list" class="resources-list">
-        <div class="resources__loading">A carregar recursos…</div>
-      </div>
-    </div>
-  `;
+    `;
+  }
 
   await loadResources();
 }
