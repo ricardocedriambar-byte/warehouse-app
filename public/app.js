@@ -103,11 +103,15 @@ async function showLoginScreen() {
         overlay.style.display = 'none';
         applyRoleRestrictions();
         loadItemsFromCache();
-        await loadOrders({ silent: true });
-        renderOrdersList();
+        loadOrders({ silent: true }).then(() => renderOrdersList());
         loadAllItems();
         ensurePushPermissionPrompt();
-        await applyLandingTab();
+        // Not awaited on the orders load above — waiting on that network
+        // request before switching off the hardcoded Scan screen just
+        // means the person watches a Scan → landing-tab flash/slide every
+        // time they log in, for no reason (the landing tab's own
+        // activateTab() loads whatever data it needs itself).
+        applyLandingTab();
       });
     });
   } catch (err) {
@@ -305,8 +309,7 @@ async function applyLandingTab() {
   // the default landing setting (or who explicitly chose "Início") never
   // got routed anywhere — the one landing page choice that never worked.
   const targetTab = auth.user?.defaultTab || 'home';
-  const tabBtn = $(`.tabbar__btn[data-goto="${targetTab}"]`);
-  if (tabBtn) tabBtn.click();
+  if ($(`.tabbar__btn[data-goto="${targetTab}"]`)) activateTab(targetTab, { instant: true });
 }
 
 function applyRoleRestrictions() {
@@ -379,7 +382,7 @@ let viewAnimating = false;
 // 'back' slides it in from the left. Falls back to an instant swap when
 // reduced motion is requested or there's nothing to animate from.
 function animateViewSwap(fromEl, toEl, direction) {
-  if (!fromEl || !toEl || fromEl === toEl || prefersReducedMotion) {
+  if (!fromEl || !toEl || fromEl === toEl || prefersReducedMotion || direction === 'instant') {
     if (fromEl && fromEl !== toEl) fromEl.dataset.active = 'false';
     toEl.dataset.active = 'true';
     return;
@@ -2867,30 +2870,38 @@ function renderMaterialsList(materials) {
   });
 }
 
+// Switches to a tab-bar view and kicks off whatever data load that screen
+// needs — shared by the tab-bar click handler and applyLandingTab(), so
+// jumping to a tab at startup behaves exactly like the user clicking it
+// themselves. Pass instant: true to skip the slide animation (used for the
+// startup landing-tab jump — animating away from the hardcoded Scan screen
+// the instant the app opens just draws attention to it instead of hiding it).
+function activateTab(target, { instant = false } = {}) {
+  const direction = instant ? 'instant' : undefined;
+  setView(target, { direction });
+  if (target === 'browse') renderBrowseList($('#browse-search')?.value || '');
+  if (target === 'orders') {
+    renderOrdersList();
+    loadOrders({ silent: true }).then(() => renderOrdersList());
+  }
+  if (target === 'recursos') {
+    if (auth.isWarehouse()) { setView('scan', { pushHistory: false, direction }); return; }
+    renderResourcesPanel();
+  }
+  if (target === 'viaturas') renderViaturasPanel();
+  if (target === 'home') {
+    renderHome();
+    Promise.all([loadOrders({ silent: true }), loadAllItems()]).then(() => renderHome());
+  }
+}
+
 // ═══════════════════════════════════════════════════════════
 // INIT
 // ═══════════════════════════════════════════════════════════
 function init() {
   // Tab bar
   $$('.tabbar__btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const target = btn.dataset.goto;
-      setView(target);
-      if (target === 'browse') renderBrowseList($('#browse-search')?.value || '');
-      if (target === 'orders') {
-        renderOrdersList();
-        loadOrders({ silent: true }).then(() => renderOrdersList());
-      }
-      if (target === 'recursos') {
-        if (auth.isWarehouse()) { setView('scan', { pushHistory: false }); return; }
-        renderResourcesPanel();
-      }
-      if (target === 'viaturas') renderViaturasPanel();
-      if (target === 'home') {
-        renderHome();
-        Promise.all([loadOrders({ silent: true }), loadAllItems()]).then(() => renderHome());
-      }
-    });
+    btn.addEventListener('click', () => activateTab(btn.dataset.goto));
   });
 
   // Delegated once here, instead of per-card in renderOrdersList, so
@@ -3037,10 +3048,15 @@ function init() {
     applyRoleRestrictions();
     loadItemsFromCache();
     loadAllItems();
-    loadOrders({ silent: true }).then(() => {
-      renderOrdersList();
-      applyLandingTab();
-    });
+    loadOrders({ silent: true }).then(() => renderOrdersList());
+    // Not gated behind the orders load above — this is the common case
+    // (an already-logged-in session resuming, i.e. just reopening the
+    // app), so waiting on that network round-trip before leaving the
+    // hardcoded Scan screen turned every app open into a visible
+    // Scan → landing-tab flash/slide. activateTab() (called inside
+    // applyLandingTab) loads whatever data the actual landing tab needs
+    // on its own, same as a manual tab click would.
+    applyLandingTab();
     ensurePushPermissionPrompt();
   } else {
     showLoginScreen();
