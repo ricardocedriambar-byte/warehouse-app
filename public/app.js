@@ -1044,24 +1044,31 @@ function renderOrderCardHTML(order) {
 
 // order-card__progress-bar already has a CSS width transition, but every
 // caller here rebuilds the cards from scratch via innerHTML, so a freshly
-// inserted bar has no "before" width to animate from — it would just show
-// up already at its final size. Starting it at 0% and animating to the
-// real width on the next frame gives every render (initial load, tab
-// switch, background refresh) a visible fill instead.
+// inserted bar has no "before" width to animate from by itself. Tracking
+// each order's last-rendered percentage here lets a bar animate only the
+// first time an order is seen (a fill-in from 0) or when its percentage
+// has genuinely changed since the last render (interpolated from the old
+// value) — an order whose progress hasn't changed is left untouched, so a
+// routine background refresh no longer flashes every bar back to 0% and
+// refills it.
+const lastOrderProgressPct = new Map();
 function animateProgressBars(container) {
   const bars = container.querySelectorAll('.order-card__progress-bar');
-  if (!bars.length || prefersReducedMotion) return;
+  if (!bars.length) return;
   bars.forEach(bar => {
-    bar.dataset.targetWidth = bar.style.width;
+    const orderId = bar.closest('.order-card')?.dataset.orderId;
+    const targetWidth = bar.style.width;
+    const targetPct = parseFloat(targetWidth) || 0;
+    const prevPct = orderId ? lastOrderProgressPct.get(orderId) : undefined;
+    if (orderId) lastOrderProgressPct.set(orderId, targetPct);
+
+    if (prefersReducedMotion || prevPct === targetPct) return;
+
     bar.style.transition = 'none';
-    bar.style.width = '0%';
-  });
-  void container.offsetWidth;
-  requestAnimationFrame(() => {
-    bars.forEach(bar => {
-      bar.style.transition = '';
-      bar.style.width = bar.dataset.targetWidth;
-    });
+    bar.style.width = (prevPct === undefined ? 0 : prevPct) + '%';
+    void bar.offsetWidth;
+    bar.style.transition = '';
+    requestAnimationFrame(() => { bar.style.width = targetWidth; });
   });
 }
 
