@@ -338,8 +338,109 @@ const $$ = sel => Array.from(document.querySelectorAll(sel));
 // ═══════════════════════════════════════════════════════════
 const viewHistory = [];
 
-function setView(name, { pushHistory = true } = {}) {
-  $$('.view').forEach(el => el.dataset.active = String(el.dataset.view === name));
+// Lateral order of the tab-bar views. Used only to infer a left/right slide
+// direction when setView() isn't told one explicitly (e.g. tapping a tab) —
+// back-button-style navigation always passes direction: 'back' explicitly
+// (see the call sites below), so this order doesn't need to cover every view.
+const TAB_ORDER = ['home', 'scan', 'orders', 'browse', 'recursos', 'viaturas'];
+
+// Duration of the view slide transition, in ms — must match the CSS
+// transition on .view[data-animating="true"] in app.css.
+const VIEW_TX_MS = 320;
+const prefersReducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+
+// Tracks which view is logically "current" independent of the DOM. During a
+// slide transition both the outgoing and incoming .view elements briefly
+// carry data-active="true" so they can both stay painted — code that needs
+// to know the single current view (refreshVisibleItemViews,
+// refreshVisibleOrderViews, nearestScrollableAncestor) reads this instead of
+// querying the DOM for [data-active="true"].
+let currentViewName = document.querySelector('.view[data-active="true"]')?.dataset.view || 'scan';
+let viewAnimating = false;
+
+// Slides `fromEl` out and `toEl` in. direction: 'forward' slides the new
+// view in from the right (going deeper / rightward in the tab order);
+// 'back' slides it in from the left. Falls back to an instant swap when
+// reduced motion is requested or there's nothing to animate from.
+function animateViewSwap(fromEl, toEl, direction) {
+  if (!fromEl || !toEl || fromEl === toEl || prefersReducedMotion) {
+    if (fromEl && fromEl !== toEl) fromEl.dataset.active = 'false';
+    toEl.dataset.active = 'true';
+    return;
+  }
+  if (viewAnimating) {
+    // An earlier transition is still mid-flight — snap it to its end state
+    // instantly rather than letting two animations fight over the same
+    // elements.
+    $$('.view[data-animating="true"]').forEach(el => {
+      el.dataset.animating = 'false';
+      el.style.transform = '';
+    });
+  }
+  viewAnimating = true;
+  const enterFrom = direction === 'back' ? '-100%' : '100%';
+  const exitTo = direction === 'back' ? '100%' : '-100%';
+
+  fromEl.dataset.active = 'true';
+  toEl.dataset.active = 'true';
+  fromEl.dataset.animating = 'true';
+  toEl.dataset.animating = 'true';
+
+  // Set the starting positions with transitions disabled, force a reflow so
+  // the browser commits them, then re-enable transitions and set the end
+  // positions on the next frame — this is what makes the transform change
+  // actually animate instead of jumping straight to the end state.
+  fromEl.style.transition = 'none';
+  toEl.style.transition = 'none';
+  fromEl.style.transform = 'translateX(0)';
+  toEl.style.transform = `translateX(${enterFrom})`;
+  void toEl.offsetWidth;
+  fromEl.style.transition = '';
+  toEl.style.transition = '';
+
+  requestAnimationFrame(() => {
+    fromEl.style.transform = `translateX(${exitTo})`;
+    toEl.style.transform = 'translateX(0)';
+  });
+
+  let done = false;
+  const cleanup = () => {
+    if (done) return;
+    done = true;
+    fromEl.dataset.active = 'false';
+    fromEl.dataset.animating = 'false';
+    toEl.dataset.animating = 'false';
+    fromEl.style.transform = '';
+    toEl.style.transform = '';
+    toEl.removeEventListener('transitionend', onTransitionEnd);
+    viewAnimating = false;
+  };
+  const onTransitionEnd = (e) => {
+    if (e.target === toEl && e.propertyName === 'transform') cleanup();
+  };
+  toEl.addEventListener('transitionend', onTransitionEnd);
+  // Safety net in case transitionend never fires (e.g. the tab is
+  // backgrounded mid-animation).
+  setTimeout(cleanup, VIEW_TX_MS + 80);
+}
+
+function setView(name, { pushHistory = true, direction } = {}) {
+  const fromName = currentViewName;
+  if (name !== fromName) {
+    if (direction === undefined) {
+      const fromIdx = TAB_ORDER.indexOf(fromName);
+      const toIdx = TAB_ORDER.indexOf(name);
+      direction = (fromIdx !== -1 && toIdx !== -1 && toIdx < fromIdx) ? 'back' : 'forward';
+    }
+    const fromEl = document.querySelector(`.view[data-view="${fromName}"]`);
+    const toEl = document.querySelector(`.view[data-view="${name}"]`);
+    $$('.view').forEach(el => {
+      if (el !== fromEl && el.dataset.view !== name) el.dataset.active = 'false';
+    });
+    if (fromEl && toEl) animateViewSwap(fromEl, toEl, direction);
+    else if (toEl) toEl.dataset.active = 'true';
+    currentViewName = name;
+  }
   $$('.tabbar__btn').forEach(el => el.dataset.active = String(el.dataset.goto === name));
   $('.topbar')?.classList.toggle('topbar--hidden', name === 'viaturas');
   if (name !== 'scan') stopScanner();
@@ -355,10 +456,10 @@ window.addEventListener('popstate', () => {
   if (!prev) {
     viewHistory.push('scan');
     history.pushState({ view: 'scan' }, '', '');
-    setView('scan', { pushHistory: false });
+    setView('scan', { pushHistory: false, direction: 'back' });
     return;
   }
-  setView(prev, { pushHistory: false });
+  setView(prev, { pushHistory: false, direction: 'back' });
   if (prev === 'orders') renderOrdersList();
   if (prev === 'browse') renderBrowseList($('#browse-search')?.value || '');
   if (prev === 'home') renderHome();
@@ -494,9 +595,7 @@ async function loadAllItems({ silent = false } = {}) {
 // data in memory but the person keeps looking at stale numbers until they
 // navigate away and back.
 function refreshVisibleItemViews() {
-  const activeView = document.querySelector('.view[data-active="true"]');
-  if (!activeView) return;
-  const viewName = activeView.dataset.view;
+  const viewName = currentViewName;
 
   if (viewName === 'browse') {
     renderBrowseList($('#browse-search')?.value || '');
@@ -513,9 +612,7 @@ function refreshVisibleItemViews() {
 // the Orders list, an open order-pick screen, or the Home dashboard until
 // the person happens to navigate away and back.
 function refreshVisibleOrderViews() {
-  const activeView = document.querySelector('.view[data-active="true"]');
-  if (!activeView) return;
-  const viewName = activeView.dataset.view;
+  const viewName = currentViewName;
 
   if (viewName === 'orders') {
     renderOrdersList();
@@ -552,7 +649,7 @@ function renderItemDetail(item) {
         <p>Nenhum artigo encontrado</p>
         <p class="item-error__sku">${state.lastFailedSku || ''}</p>
       </div>`;
-    root.querySelector('[data-goto]').addEventListener('click', () => setView('scan'));
+    root.querySelector('[data-goto]').addEventListener('click', () => setView('scan', { direction: 'back' }));
     return;
   }
 
@@ -634,7 +731,7 @@ function renderItemDetail(item) {
       ${item.observacoes ? `<div class="purchase-note">${item.observacoes}</div>` : ''}
     </div>`;
 
-  root.querySelector('[data-goto]').addEventListener('click', () => setView('scan'));
+  root.querySelector('[data-goto]').addEventListener('click', () => setView('scan', { direction: 'back' }));
   wireFieldCard(root, 'stock', item.stock, val => saveField('stock', val));
   wireFieldCard(root, 'preco', item.preco, val => saveField('preco', val));
 
@@ -1057,12 +1154,12 @@ function renderHome() {
   `;
 }
 
-async function openOrderDetail(orderId) {
+async function openOrderDetail(orderId, direction) {
   const order = orderState.orders.find(o => o.orderId === orderId);
   if (!order) return;
   orderState.currentOrder = order;
   renderOrderPick(order, order.status === 'Rascunho');
-  setView('order-pick');
+  setView('order-pick', direction ? { direction } : {});
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1161,7 +1258,7 @@ function renderOrderCreate(existingOrder = null) {
     </div>`;
 
   panel.querySelector('#create-back-btn').addEventListener('click', () => {
-    if (isEditing) { openOrderDetail(existingOrder.orderId); } else { setView('orders'); }
+    if (isEditing) { openOrderDetail(existingOrder.orderId, 'back'); } else { setView('orders', { direction: 'back' }); }
   });
   panel.querySelector('#add-item-btn').addEventListener('click', () => showItemSearchOverlay());
 
@@ -2114,7 +2211,7 @@ function renderOrderPick(order, isDraft) {
 
   // Back
   panel.querySelector('#pick-back-btn').addEventListener('click', () => {
-    setView('orders'); renderOrdersList();
+    setView('orders', { direction: 'back' }); renderOrdersList();
   });
 
   // Edit ficha (Rascunho or Enviado, owner/admin only — see canEditOrder)
@@ -2827,7 +2924,7 @@ function init() {
       if (/(auto|scroll)/.test(style.overflowY) && node.scrollHeight > node.clientHeight) return node;
       node = node.parentElement;
     }
-    return document.querySelector('.view[data-active="true"]');
+    return document.querySelector(`.view[data-view="${currentViewName}"]`);
   }
 
   let touchStartY = 0;

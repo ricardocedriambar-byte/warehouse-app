@@ -244,6 +244,18 @@ input[type=number] { -moz-appearance: textfield; }
   -webkit-overflow-scrolling: touch;
 }
 .view[data-active="true"] { display: block; }
+/* During a slide transition both the outgoing and incoming views are
+   data-active="true" at once (so both stay painted), animated via inline
+   transforms set from app.js's animateViewSwap(). This transition's
+   duration must match VIEW_TX_MS in app.js. */
+.view[data-animating="true"] {
+  display: block;
+  transition: transform 0.32s cubic-bezier(.4, 0, .2, 1);
+  will-change: transform;
+}
+@media (prefers-reduced-motion: reduce) {
+  .view[data-animating="true"] { transition: none; }
+}
 
 /* ── Tab bar ───────────────────────────────────────────────── */
 .tabbar {
