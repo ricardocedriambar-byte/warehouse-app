@@ -111,8 +111,17 @@ async function showLoginScreen() {
         // send them straight to what it was about instead of the default
         // tab, which is what they'd expect from tapping it in the first place.
         const wentToPushTarget = await applyPendingPushTarget();
-        if (!wentToPushTarget && user.defaultTab && $(`.tabbar__btn[data-goto="${user.defaultTab}"]`)) {
-          $(`.tabbar__btn[data-goto="${user.defaultTab}"]`).click();
+        if (!wentToPushTarget) {
+          // "" is the Settings picker's "Início (padrão)" option — it's
+          // supposed to mean the Home tab, but the app's actual hardcoded
+          // starting view is Scan (see index.html), so leaving this as a
+          // falsy check for user.defaultTab meant anyone who left their
+          // landing page on the default setting (or explicitly chose
+          // "Início") never got routed anywhere and silently stayed on
+          // Scan — the one landing page choice that never worked.
+          const targetTab = user.defaultTab || 'home';
+          const tabBtn = $(`.tabbar__btn[data-goto="${targetTab}"]`);
+          if (tabBtn) tabBtn.click();
         }
       });
     });
