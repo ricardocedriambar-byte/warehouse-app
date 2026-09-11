@@ -351,20 +351,6 @@ function dpFmtNum(n) {
   return (Math.round(n*100)/100).toString().replace('.', ',');
 }
 
-// Renders BOM rows as table rows, converting the leading spaces baked
-// into indented (child) descriptions to &nbsp; for HTML — the underlying
-// data keeps plain spaces (which the PDF export needs as literal
-// whitespace), only the on-screen preview needs this conversion.
-function dpBomRowsHtml(bomRows) {
-  return bomRows.map(r => {
-    const leadingSpaces = r.descricao.match(/^ */)[0].length;
-    const escaped = dpEsc(r.descricao.trim());
-    const indented = '&nbsp;'.repeat(leadingSpaces) + escaped;
-    const qtyCell = r.indent ? '' : dpFmtNum(r.qty);
-    return `<tr class="${r.indent ? 'doors-doc__bom-child' : 'doors-doc__bom-parent'}"><td class="doors-doc__qty">${qtyCell}</td><td>${indented}</td></tr>`;
-  }).join('');
-}
-
 function dpCalcType(t) {
   const aduelaPecasUnit = t.tipo === 'dupla' ? 3 : 2.5;
   const guarnLargoUnit = 4; // laterais — sempre 4, independente do tipo
@@ -500,45 +486,6 @@ function renderDoorsSummaryBar() {
   bar.innerHTML = chips.map(c => `<span class="doors-summary__chip">${c}</span>`).join('');
 }
 
-function renderDoorsDocument() {
-  const obraEl = document.getElementById('dp-obra');
-  if (!obraEl) return;
-
-  const obra = obraEl.value;
-  const clientName = (typeof orderState !== 'undefined' && orderState.newOrderClient) ? orderState.newOrderClient.name : '';
-
-  document.getElementById('dp-out-date').textContent = dpFmtDate(document.getElementById('dp-data').value);
-  document.getElementById('dp-out-sub').textContent =
-    [clientName, obra].filter(Boolean).join(' — ') || 'Especificação de portas para produção';
-  document.getElementById('dp-out-obs').innerHTML = dpEsc(document.getElementById('dp-obs-gerais').value).replace(/\n/g,'<br>') || '&nbsp;';
-
-  const doorsBody = document.getElementById('dp-out-doors');
-  const bomBody = document.getElementById('dp-out-bom');
-
-  if (dpTypes.length === 0) {
-    doorsBody.innerHTML = `<tr><td colspan="6" class="doors-empty">Sem tipos de porta adicionados.</td></tr>`;
-    bomBody.innerHTML = `<tr><td class="doors-empty">Sem dados.</td></tr>`;
-    return;
-  }
-
-  doorsBody.innerHTML = dpTypes.map(t => {
-    const tipoLabel = t.tipo === 'dupla' ? 'Dupla' : (t.tipo === 'passagem' ? 'Passagem' : 'Simples');
-    return `
-      <tr>
-        <td>${t.qty}</td>
-        <td>${dpMedida(t) ? dpMedida(t) + 'MM' : '—'}</td>
-        <td>${tipoLabel}${t.material ? ' · ' + dpEsc(t.material) : ''}</td>
-        <td>${dpEsc(t.abertura) || '—'}</td>
-        <td>${t.vidro ? 'Sim' : '—'}</td>
-        <td>${[dpEsc(t.fechadura), dpEsc(t.obs)].filter(Boolean).join(' · ') || '—'}</td>
-      </tr>
-    `;
-  }).join('');
-
-  const bomRows = computeDoorsBom(dpTypes);
-  bomBody.innerHTML = dpBomRowsHtml(bomRows);
-}
-
 // Packages the current builder state into what createOrder() needs:
 // order lines (the BOM, with synthetic SKUs so they never touch real
 // inventory stock) plus the full structured spec for later reprinting.
@@ -571,57 +518,4 @@ function getDoorsOrderPayload() {
 
 function doorsHasContent() {
   return dpTypes.length > 0 && dpTypes.some(t => t.qty > 0);
-}
-
-// ═══════════════════════════════════════════════════════════
-// SAVED ORDER VIEW — renders the read-only ficha for a Portas order
-// that's already been submitted, from its stored doorsData JSON.
-// ═══════════════════════════════════════════════════════════
-function renderSavedDoorsDocument(container, order) {
-  const d = order.doorsData;
-  if (!container || !d) return;
-
-  const bomRowsHtml = (d.bomRows && d.bomRows.length)
-    ? dpBomRowsHtml(d.bomRows)
-    : `<tr><td class="doors-empty">Sem dados.</td></tr>`;
-
-  const typesHtml = (d.types || []).map(t => {
-    const tipoLabel = t.tipo === 'dupla' ? 'Dupla' : (t.tipo === 'passagem' ? 'Passagem' : 'Simples');
-    return `
-      <tr>
-        <td>${t.qty}</td>
-        <td>${dpMedida(t) ? dpMedida(t) + 'MM' : '—'}</td>
-        <td>${tipoLabel}${t.material ? ' · ' + dpEsc(t.material) : ''}</td>
-        <td>${dpEsc(t.abertura) || '—'}</td>
-        <td>${t.vidro ? 'Sim' : '—'}</td>
-        <td>${[dpEsc(t.fechadura), dpEsc(t.obs)].filter(Boolean).join(' · ') || '—'}</td>
-      </tr>`;
-  }).join('') || `<tr><td colspan="6" class="doors-empty">Sem tipos de porta.</td></tr>`;
-
-  container.innerHTML = `
-    <div class="doors-doc" id="dp-saved-document">
-      <div class="doors-doc__header">
-        <img class="doors-doc__logo" src="/icons/icon-512.png" alt="Cedriambar">
-        <div class="doors-doc__heading">
-          <h2>Ficha de Encomenda</h2>
-          <div class="doors-doc__sub">${dpEsc([order.clientName, d.obra].filter(Boolean).join(' — ')) || 'Especificação de portas para produção'}</div>
-        </div>
-        <div class="doors-doc__date">${dpFmtDate(d.dataFicha)}</div>
-      </div>
-
-      <div class="doors-doc__section-title">Materiais a separar</div>
-      <table class="doors-doc__bom">${bomRowsHtml}</table>
-
-      <div class="doors-doc__section-title">Detalhe por tipo</div>
-      <table class="doors-doc__table">
-        <thead>
-          <tr><th>Qtd</th><th>Medida</th><th>Tipo</th><th>Abertura</th><th>Vidro</th><th>Fechad. / Obs.</th></tr>
-        </thead>
-        <tbody>${typesHtml}</tbody>
-      </table>
-
-      <div class="doors-doc__obs-label">Observações gerais</div>
-      <div class="doors-doc__obs-value">${d.obsGerais ? dpEsc(d.obsGerais).replace(/\n/g,'<br>') : '&nbsp;'}</div>
-    </div>
-  `;
 }
