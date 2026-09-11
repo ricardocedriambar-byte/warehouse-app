@@ -437,6 +437,24 @@ input[type=number] { -moz-appearance: textfield; }
 .scan-frame__corner--bl { bottom: 0; left: 0; border-right: none; border-top: none; border-radius: 0 0 0 3px; }
 .scan-frame__corner--br { bottom: 0; right: 0; border-left: none; border-top: none; border-radius: 0 0 3px 0; }
 
+/* Success feedback when a code is decoded — a quick green flash + a pulse
+   on the frame, held for a beat (see the setTimeout in scanLoopFallback)
+   before the screen navigates to the item. */
+.scan-stage__flash {
+  position: absolute; inset: 0;
+  background: var(--success);
+  opacity: 0;
+  pointer-events: none;
+}
+.scan-stage[data-success="true"] .scan-frame__corner { border-color: var(--success); }
+.scan-stage[data-success="true"] .scan-stage__flash { animation: scan-flash 0.35s ease-out; }
+.scan-stage[data-success="true"] .scan-frame { animation: scan-frame-pulse 0.3s ease-out; }
+@keyframes scan-flash { 0% { opacity: 0.35; } 100% { opacity: 0; } }
+@keyframes scan-frame-pulse { 0% { transform: scale(1); } 40% { transform: scale(1.08); } 100% { transform: scale(1); } }
+@media (prefers-reduced-motion: reduce) {
+  .scan-stage__flash, .scan-frame { animation: none !important; }
+}
+
 .scan-hint {
   position: absolute; bottom: 16px; left: 0; right: 0;
   text-align: center;
@@ -1089,6 +1107,14 @@ select.order-field { padding: 12px var(--sp-4); }
 .order-pick__progress-label { font-family: var(--mono); font-size: 12px; color: var(--t3); }
 
 .pick-lines { display: flex; flex-direction: column; gap: var(--sp-3); margin-top: var(--sp-4); }
+/* Brief confirmation flash right after a pick is saved, before the panel
+   re-renders with the settled (dimmed, done) state — see the confirm
+   button handler in app.js. */
+.pick-line--confirmed { animation: pick-line-confirm 0.26s ease-out; }
+@keyframes pick-line-confirm {
+  0%   { background: var(--success-bg); transform: scale(1.015); }
+  100% { background: var(--s1); transform: scale(1); }
+}
 .pick-line {
   background: var(--s1);
   border-radius: var(--r-md);
@@ -1203,6 +1229,8 @@ select.order-field { padding: 12px var(--sp-4); }
   .topbar__refresh.spinning svg { animation: none; }
   .toast { transition: none; }
   .pick-line { transition: none; }
+  .pick-line--confirmed { animation: none; }
+  .order-card__progress-bar { transition: none; }
   * { scroll-behavior: auto !important; }
   .btn-primary:active, .btn-ghost:active, .btn-danger:active,
   .browse-row:active, .order-card:active, .login-user-btn:active,

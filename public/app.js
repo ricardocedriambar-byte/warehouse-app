@@ -862,7 +862,7 @@ function stopScanner() {
   if (state.scanLoopId) { cancelAnimationFrame(state.scanLoopId); state.scanLoopId = null; }
   if (state.stream) { state.stream.getTracks().forEach(t => t.stop()); state.stream = null; }
   if (video) { video.classList.remove('live'); video.srcObject = null; }
-  if (stage) stage.dataset.scanning = 'false';
+  if (stage) { stage.dataset.scanning = 'false'; stage.dataset.success = 'false'; }
 }
 
 let jsQRLoaded = false;
@@ -892,6 +892,7 @@ async function ensureJsQR() {
 }
 
 function scanLoopFallback(video) {
+  const stage  = $('#scan-stage');
   const canvas = document.createElement('canvas');
   const ctx    = canvas.getContext('2d', { willReadFrequently: true });
   const TARGET_WIDTH = 480;
@@ -905,7 +906,15 @@ function scanLoopFallback(video) {
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
       const code = window.jsQR(imageData.data, imageData.width, imageData.height);
-      if (code?.data) { handleScannedCode(code.data); return; }
+      if (code?.data) {
+        // Flash the frame green for a beat before navigating away — without
+        // this a successful scan looked identical to just pointing the
+        // camera somewhere, since the very next thing that happened was the
+        // screen changing.
+        if (stage) stage.dataset.success = 'true';
+        setTimeout(() => handleScannedCode(code.data), prefersReducedMotion ? 0 : 220);
+        return;
+      }
     }
     state.scanLoopId = requestAnimationFrame(tick);
   };
@@ -1033,6 +1042,29 @@ function renderOrderCardHTML(order) {
     </button>`;
 }
 
+// order-card__progress-bar already has a CSS width transition, but every
+// caller here rebuilds the cards from scratch via innerHTML, so a freshly
+// inserted bar has no "before" width to animate from — it would just show
+// up already at its final size. Starting it at 0% and animating to the
+// real width on the next frame gives every render (initial load, tab
+// switch, background refresh) a visible fill instead.
+function animateProgressBars(container) {
+  const bars = container.querySelectorAll('.order-card__progress-bar');
+  if (!bars.length || prefersReducedMotion) return;
+  bars.forEach(bar => {
+    bar.dataset.targetWidth = bar.style.width;
+    bar.style.transition = 'none';
+    bar.style.width = '0%';
+  });
+  void container.offsetWidth;
+  requestAnimationFrame(() => {
+    bars.forEach(bar => {
+      bar.style.transition = '';
+      bar.style.width = bar.dataset.targetWidth;
+    });
+  });
+}
+
 function renderOrdersList() {
   const list = $('#orders-list');
   if (!list) return;
@@ -1075,6 +1107,7 @@ function renderOrdersList() {
   });
 
   list.innerHTML = backorderBanner + sorted.map(renderOrderCardHTML).join('');
+  animateProgressBars(list);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1152,6 +1185,7 @@ function renderHome() {
       <div class="home-section__list">${stockSection}</div>
     </div>
   `;
+  animateProgressBars(panel);
 }
 
 async function openOrderDetail(orderId, direction) {
@@ -2327,6 +2361,12 @@ function renderOrderPick(order, isDraft) {
         orderState.currentOrder = data.order;
         const idx = orderState.orders.findIndex(o => o.orderId === order.orderId);
         if (idx !== -1) orderState.orders[idx] = data.order;
+        // renderOrderPick below rebuilds the whole panel from scratch, so
+        // without this the line would just vanish and reappear dimmed —
+        // a beat of visible confirmation first makes the pick feel
+        // registered rather than an instant, silent DOM swap.
+        lineEl.classList.add('pick-line--confirmed');
+        if (!prefersReducedMotion) await new Promise(r => setTimeout(r, 260));
         renderOrderPick(data.order, false);
         toast('Separado', 'success');
         loadAllItems({ silent: true }); // stock just changed — refresh in the background
