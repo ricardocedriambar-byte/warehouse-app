@@ -107,22 +107,7 @@ async function showLoginScreen() {
         renderOrdersList();
         loadAllItems();
         ensurePushPermissionPrompt();
-        // A notification tap that required logging in first (cold start) —
-        // send them straight to what it was about instead of the default
-        // tab, which is what they'd expect from tapping it in the first place.
-        const wentToPushTarget = await applyPendingPushTarget();
-        if (!wentToPushTarget) {
-          // "" is the Settings picker's "Início (padrão)" option — it's
-          // supposed to mean the Home tab, but the app's actual hardcoded
-          // starting view is Scan (see index.html), so leaving this as a
-          // falsy check for user.defaultTab meant anyone who left their
-          // landing page on the default setting (or explicitly chose
-          // "Início") never got routed anywhere and silently stayed on
-          // Scan — the one landing page choice that never worked.
-          const targetTab = user.defaultTab || 'home';
-          const tabBtn = $(`.tabbar__btn[data-goto="${targetTab}"]`);
-          if (tabBtn) tabBtn.click();
-        }
+        await applyLandingTab();
       });
     });
   } catch (err) {
@@ -300,6 +285,28 @@ async function applyPendingPushTarget() {
   history.replaceState(null, '', location.pathname);
   if (!auth.user) return false;
   return navigateToPushTargetString(push);
+}
+
+// Sends the current user to their configured landing tab (Settings' "Ecrã
+// inicial ao entrar") — called both right after picking a user on the
+// login screen and when init() resumes an already-logged-in session from
+// localStorage, since that second, far more common case (just reopening
+// the app) used to skip this entirely and always leave people on whatever
+// the hardcoded starting view is (Scan), no matter what they'd configured.
+// A notification tap that required logging in/resuming first (cold start)
+// takes priority — it sends them straight to what it was about instead,
+// since that's what tapping it would have done if the app were open.
+async function applyLandingTab() {
+  const wentToPushTarget = await applyPendingPushTarget();
+  if (wentToPushTarget) return;
+  // "" is the Settings picker's "Início (padrão)" option — it's supposed
+  // to mean the Home tab, but the app's actual hardcoded starting view is
+  // Scan (see index.html), so treating it as "do nothing" meant anyone on
+  // the default landing setting (or who explicitly chose "Início") never
+  // got routed anywhere — the one landing page choice that never worked.
+  const targetTab = auth.user?.defaultTab || 'home';
+  const tabBtn = $(`.tabbar__btn[data-goto="${targetTab}"]`);
+  if (tabBtn) tabBtn.click();
 }
 
 function applyRoleRestrictions() {
@@ -3032,7 +3039,7 @@ function init() {
     loadAllItems();
     loadOrders({ silent: true }).then(() => {
       renderOrdersList();
-      applyPendingPushTarget();
+      applyLandingTab();
     });
     ensurePushPermissionPrompt();
   } else {
