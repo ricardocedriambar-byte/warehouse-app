@@ -331,6 +331,7 @@ const state = {
   currentItem: null,
   stream: null,
   scanLoopId: null,
+  browseLowStockOnly: false, // "Stock baixo" filter chip on the Inventário tab
 };
 
 const orderState = {
@@ -835,6 +836,11 @@ function wireFieldCard(root, key, initialValue, onSave) {
   saveBtn.addEventListener('click', async () => {
     const value = parseFloat(input.value);
     if (Number.isNaN(value)) { toast('Valor inválido', 'error'); return; }
+    // Unlike every other save button in the app, this one wasn't disabled
+    // while the request was in flight — a fast double-tap could fire two
+    // overlapping saves. (renderItemDetail() rebuilds this button either
+    // way once onSave resolves, so there's no need to re-enable it here.)
+    saveBtn.disabled = true;
     saveBtn.textContent = 'A guardar…';
     await onSave(value);
   });
@@ -998,7 +1004,7 @@ function renderBrowseList(query) {
   }
 
   const q = (query || '').trim().toLowerCase();
-  const filtered = q
+  let filtered = q
     ? state.items.filter(i =>
         i.sku.toLowerCase().includes(q) ||
         i.descricao.toLowerCase().includes(q) ||
@@ -1006,8 +1012,23 @@ function renderBrowseList(query) {
       )
     : state.items;
 
+  if (state.browseLowStockOnly) {
+    // Same "low" rule as the Home dashboard preview and the email alert
+    // (lib/stockAlerts.js) — only items with a STOCK MÍNIMO actually set,
+    // below it — so this filter never disagrees with what Home already
+    // flagged. Sorted lowest-first too, matching Home's ordering, since
+    // that's presumably the more urgent end of the list.
+    filtered = filtered
+      .filter(i => i.stockMinimo != null && (i.disponivel ?? i.stock ?? 0) < i.stockMinimo)
+      .sort((a, b) => (a.disponivel ?? a.stock) - (b.disponivel ?? b.stock));
+  }
+
   if (filtered.length === 0) {
-    list.innerHTML = `<div class="browse__empty">Sem resultados para "${query}"</div>`;
+    list.innerHTML = `<div class="browse__empty">${
+      q ? `Sem resultados para "${query}"`
+        : state.browseLowStockOnly ? 'Nenhum artigo abaixo do stock mínimo'
+        : 'Sem artigos'
+    }</div>`;
     return;
   }
 
@@ -1237,11 +1258,12 @@ function renderHome() {
       ? `<div class="home-empty">Sem encomendas ativas</div>`
       : activePreview.map(renderOrderCardHTML).join('');
 
+  const STOCK_PREVIEW_LIMIT = 8;
   const stockSection = state.items.length === 0
     ? skeletonRows(3)
     : lowStock.length === 0
       ? `<div class="home-empty">Stock dentro dos mínimos definidos</div>`
-      : lowStock.slice(0, 8).map(item => {
+      : lowStock.slice(0, STOCK_PREVIEW_LIMIT).map(item => {
           const disp = item.disponivel ?? item.stock;
           return `
             <button class="browse-row" data-sku="${item.sku}">
@@ -1274,11 +1296,28 @@ function renderHome() {
     </div>
 
     <div class="home-section">
-      <div class="section-label" style="padding:0 var(--sp-4)">Stock abaixo do mínimo</div>
+      <div class="section-label section-label--row" style="padding:0 var(--sp-4)">
+        <span>Stock abaixo do mínimo</span>
+        ${lowStock.length > STOCK_PREVIEW_LIMIT
+          ? `<button type="button" class="section-label__link" id="home-lowstock-viewall">Ver todos (${lowStock.length})</button>`
+          : ''}
+      </div>
       <div class="home-section__list">${stockSection}</div>
     </div>
   `;
   animateProgressBars(panel);
+
+  // Only reachable when the preview above was actually truncated — the
+  // Home dashboard only ever shows the 8 most urgent low-stock items, with
+  // no other way to see the rest until now.
+  panel.querySelector('#home-lowstock-viewall')?.addEventListener('click', () => {
+    state.browseLowStockOnly = true;
+    const chip = $('#browse-lowstock-filter');
+    if (chip) chip.dataset.active = 'true';
+    const searchInput = $('#browse-search');
+    if (searchInput) searchInput.value = '';
+    activateTab('browse');
+  });
 }
 
 async function openOrderDetail(orderId, direction) {
@@ -3046,6 +3085,11 @@ function init() {
 
   // Browse search
   $('#browse-search')?.addEventListener('input', debounce(e => renderBrowseList(e.target.value), 120));
+  $('#browse-lowstock-filter')?.addEventListener('click', function () {
+    state.browseLowStockOnly = !state.browseLowStockOnly;
+    this.dataset.active = String(state.browseLowStockOnly);
+    renderBrowseList($('#browse-search')?.value || '');
+  });
 
   // Delegated once here, instead of per-row in renderBrowseList, so
   // re-rendering the list on every keystroke never re-attaches listeners.
