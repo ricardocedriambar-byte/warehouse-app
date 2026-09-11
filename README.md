@@ -11,8 +11,12 @@ Phone (PWA)  →  Vercel serverless functions (/api/*)  →  Google Sheets API
 ```
 
 - `public/` — the installable frontend (HTML/CSS/JS, no build step, no framework).
-- `api/` — two serverless functions that are the *only* code allowed to know
-  the Google service account key.
+- `api/` — serverless functions (items, orders, clients, users, push,
+  order PDFs, resources, price sync, door materials) that are the *only*
+  code allowed to know the Google service account key. Several handle more
+  than one concern per file (e.g. `clients.js` also serves the client
+  import endpoint) to stay under Vercel's function-count limit on the
+  Hobby plan.
 - `lib/sheets.js` — all the Sheets API logic: reading rows, parsing PT-style
   numbers (`5,985`), writing STOCK/Preço, and appending to an audit log tab.
 
@@ -143,10 +147,18 @@ paid plan.
   connection, but stock/price data is always live — by design, so you never
   see or save stale numbers. No connection means no scan lookups or saves
   until it's back.
-- **Single-user, no login**, per your current setup. If you bring on a team
-  later, we should add per-user accounts so stock edits are attributable to
-  a specific person, not just "someone."
-- **Concurrent edits**: if you and a future teammate edit the same item's
-  stock within moments of each other, the second save wins — there's no
-  conflict detection yet. Fine for solo use; worth revisiting before
-  multi-user rollout.
+- **Multi-user with roles**, not single-user — this section was written
+  before per-user accounts existed. Users live in the `Utilizadores` sheet
+  tab (name, role, notification/landing-page preferences) and pick
+  themselves from a login screen; roles are `vendedor` (sales), `armazém`
+  (warehouse), and `admin`, each seeing a different set of tabs and
+  permissions.
+- **Concurrent edits**: stock/reservation changes (`adjustStock`,
+  `adjustReservado` in `lib/sheets.js`) and claiming a row for a new order
+  (`writeOrderRows` in `lib/orders.js`) all read-verify-retry rather than
+  blindly overwrite, so two people hitting the same item or creating an
+  order at the same instant no longer silently clobber each other. Marking
+  a line as picked (`updateLinePicked`) is still a direct write without
+  that same retry — two warehouse staff confirming the exact same line at
+  the exact same instant is still a last-write-wins edge case, just a
+  narrow one.

@@ -503,14 +503,31 @@ function debounce(fn, wait = 120) {
   };
 }
 
-function toast(message, kind = 'default') {
+// Third argument is optional — pass { actionLabel, onAction } to turn the
+// toast into an actionable one (e.g. "Desfazer"/Undo) instead of a plain
+// message. Existing two-argument calls are unaffected.
+function toast(message, kind = 'default', { actionLabel, onAction, duration = 2800 } = {}) {
   const el = $('#toast');
   if (!el) return;
-  el.textContent = message;
-  el.dataset.kind = kind;
-  el.dataset.show = 'true';
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { el.dataset.show = 'false'; }, 2800);
+  el.dataset.kind = kind;
+  if (actionLabel && onAction) {
+    el.dataset.interactive = 'true';
+    el.innerHTML = `<span class="toast__msg"></span><button type="button" class="toast__action"></button>`;
+    el.querySelector('.toast__msg').textContent = message;
+    const btn = el.querySelector('.toast__action');
+    btn.textContent = actionLabel;
+    btn.addEventListener('click', () => {
+      clearTimeout(toastTimer);
+      el.dataset.show = 'false';
+      onAction();
+    });
+  } else {
+    el.dataset.interactive = 'false';
+    el.textContent = message;
+  }
+  el.dataset.show = 'true';
+  toastTimer = setTimeout(() => { el.dataset.show = 'false'; }, duration);
 }
 
 // Shows a plain, non-technical message to the user while logging the real
@@ -520,6 +537,34 @@ function toast(message, kind = 'default') {
 function showError(err, fallbackMsg) {
   console.error(err);
   toast(fallbackMsg || 'Ocorreu um erro. Tente novamente.', 'error');
+}
+
+// Promise-based replacement for the native confirm() dialog, used for
+// destructive/important actions (cancel order, complete order, logout).
+// The native dialog is an unstyled OS popup that looks completely foreign
+// next to the rest of this app's dark, branded UI — this matches it
+// instead. Resolves true on confirm, false on cancel or tapping the
+// backdrop.
+function confirmDialog(message, { title = '', confirmLabel = 'Confirmar', cancelLabel = 'Cancelar', danger = false } = {}) {
+  return new Promise(resolve => {
+    const overlay = document.createElement('div');
+    overlay.className = 'confirm-overlay';
+    overlay.innerHTML = `
+      <div class="confirm-card">
+        ${title ? `<div class="confirm-card__title">${title}</div>` : ''}
+        <p class="confirm-card__text">${message}</p>
+        <div class="confirm-card__actions">
+          <button type="button" class="order-action-btn order-action-btn--draft" id="confirm-dialog-cancel">${cancelLabel}</button>
+          <button type="button" class="order-action-btn ${danger ? 'confirm-card__btn--danger' : 'order-action-btn--send'}" id="confirm-dialog-ok">${confirmLabel}</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+
+    const finish = result => { overlay.remove(); resolve(result); };
+    overlay.addEventListener('click', e => { if (e.target === overlay) finish(false); });
+    overlay.querySelector('#confirm-dialog-cancel').addEventListener('click', () => finish(false));
+    overlay.querySelector('#confirm-dialog-ok').addEventListener('click', () => finish(true));
+  });
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -966,7 +1011,16 @@ function renderBrowseList(query) {
     return;
   }
 
-  list.innerHTML = filtered.slice(0, 150).map(item => {
+  const BROWSE_LIMIT = 150;
+  // Silently cutting the list off at 150 with no indication meant an item
+  // further down an unfiltered (or broadly-matching) list on a large
+  // catalog could be invisible with no clue it was ever there — this
+  // makes the cutoff visible instead of just missing.
+  const truncatedHint = filtered.length > BROWSE_LIMIT
+    ? `<div class="results-truncated-hint">A mostrar ${BROWSE_LIMIT} de ${filtered.length} resultados — refine a pesquisa para ver mais</div>`
+    : '';
+
+  list.innerHTML = truncatedHint + filtered.slice(0, BROWSE_LIMIT).map(item => {
     const low = item.stock !== null && item.stock <= 0;
     return `
       <button class="browse-row" data-sku="${item.sku}">
@@ -1094,6 +1148,19 @@ function animateProgressBars(container) {
 function renderOrdersList() {
   const list = $('#orders-list');
   if (!list) return;
+
+  // Before orderState.loaded flips true (the very first render after
+  // opening/switching to this tab, before loadOrders' request comes back),
+  // orderState.orders is just an empty array — indistinguishable from an
+  // account that genuinely has none. Without this check that showed a
+  // real "Sem encomendas" (no orders) message for a beat on every load,
+  // which then flashed away once the real list arrived. renderHome()
+  // already guarded the same data this way; this brings the Orders tab in
+  // line with it.
+  if (!orderState.loaded) {
+    list.innerHTML = skeletonRows(4);
+    return;
+  }
 
   const user        = auth.user;
   const isWarehouse = auth.isWarehouse();
@@ -1550,8 +1617,22 @@ function renderOrderLines() {
 
   list.querySelectorAll('[data-remove]').forEach(btn => {
     btn.addEventListener('click', () => {
-      orderState.newOrderLines.splice(parseInt(btn.dataset.remove), 1);
+      const idx = parseInt(btn.dataset.remove);
+      const [removed] = orderState.newOrderLines.splice(idx, 1);
       renderOrderLines();
+      // This "×" is small and one mis-tap used to permanently discard the
+      // line — including any quantity/notes typed into it, which for a
+      // Portas line can be real work to redo. A brief undo window costs
+      // nothing when unused.
+      if (removed) {
+        toast('Artigo removido', 'default', {
+          actionLabel: 'Desfazer',
+          onAction: () => {
+            orderState.newOrderLines.splice(idx, 0, removed);
+            renderOrderLines();
+          }
+        });
+      }
     });
   });
 
@@ -1625,16 +1706,16 @@ async function showItemSearchOverlay() {
   function renderResults(q) {
     currentQuery = q || '';
     const ql = currentQuery.toLowerCase().trim();
-    const filtered = ql
+    const matched = ql
       ? state.items.filter(i =>
           i.sku.includes(ql) ||
           i.sku.replace(/^0+/,'').includes(ql) ||
           i.descricao.toLowerCase().includes(ql) ||
           i.familia.toLowerCase().includes(ql)
-        ).slice(0, 60)
-      : state.items.slice(0, 60);
+        )
+      : state.items;
 
-    if (filtered.length === 0) {
+    if (matched.length === 0) {
       results.innerHTML = `
         <div class="item-search-empty">
           <div class="item-search-empty__text">${ql ? `Nenhum artigo encontrado para "${q}"` : 'Nenhum artigo encontrado'}</div>
@@ -1646,7 +1727,16 @@ async function showItemSearchOverlay() {
       return;
     }
 
-    results.innerHTML = filtered.map(item => {
+    const RESULTS_LIMIT = 60;
+    const filtered = matched.slice(0, RESULTS_LIMIT);
+    // Same silent-cutoff problem as Inventário's search: past 60 matches,
+    // an item was just invisible with nothing telling the person to narrow
+    // their search to find it.
+    const truncatedHint = matched.length > RESULTS_LIMIT
+      ? `<div class="results-truncated-hint">A mostrar ${RESULTS_LIMIT} de ${matched.length} resultados — refine a pesquisa para ver mais</div>`
+      : '';
+
+    results.innerHTML = truncatedHint + filtered.map(item => {
       const disp = item.disponivel ?? item.stock;
       // Flag it red at zero, or below its STOCK MÍNIMO when one is set —
       // same threshold the Home dashboard and the email alert use, so a
@@ -2321,7 +2411,7 @@ function renderOrderPick(order, isDraft) {
   const draftCancelBtn = panel.querySelector('#draft-cancel-btn');
   if (draftCancelBtn) {
     draftCancelBtn.addEventListener('click', async () => {
-      if (!confirm('Cancelar esta encomenda?')) return;
+      if (!await confirmDialog('Cancelar esta encomenda?', { danger: true, confirmLabel: 'Cancelar encomenda' })) return;
       try {
         await apiPatch('/api/orders', { orderId: order.orderId, status: 'Cancelado' });
         await loadOrders({ silent: true });
@@ -2411,7 +2501,7 @@ function renderOrderPick(order, isDraft) {
       const msg = hasPicked
         ? 'Cancelar esta encomenda? O stock já separado será reposto. Esta ação não pode ser desfeita.'
         : 'Cancelar esta encomenda? Esta ação não pode ser desfeita.';
-      if (!confirm(msg)) return;
+      if (!await confirmDialog(msg, { danger: true, confirmLabel: 'Cancelar encomenda' })) return;
       cancelActiveBtn.textContent = 'A cancelar…'; cancelActiveBtn.disabled = true;
       try {
         await apiPatch('/api/orders', { orderId: order.orderId, status: 'Cancelado' });
@@ -2430,7 +2520,7 @@ function renderOrderPick(order, isDraft) {
   const completeBtn = panel.querySelector('#complete-order-btn');
   if (completeBtn) {
     completeBtn.addEventListener('click', async () => {
-      if (!confirm('Concluir esta encomenda? Deixará de aparecer como ativa.')) return;
+      if (!await confirmDialog('Concluir esta encomenda? Deixará de aparecer como ativa.', { confirmLabel: 'Concluir' })) return;
       completeBtn.textContent = 'A concluir…'; completeBtn.disabled = true;
       try {
         await apiPatch('/api/orders', { orderId: order.orderId, status: 'Concluído' });
@@ -3036,9 +3126,9 @@ function init() {
     setView('admin');
     renderAdminPanel();
   });
-  $('#logout-menu-item')?.addEventListener('click', () => {
+  $('#logout-menu-item')?.addEventListener('click', async () => {
     closeUserMenu();
-    if (confirm(`Sair como ${auth.user?.name}?`)) clearAuth();
+    if (await confirmDialog(`Sair como ${auth.user?.name}?`, { confirmLabel: 'Sair' })) clearAuth();
   });
 
   if (auth.user) {

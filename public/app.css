@@ -325,6 +325,20 @@ input[type=number] { -moz-appearance: textfield; }
 .toast[data-show="true"] { transform: translateY(0); opacity: 1; }
 .toast[data-kind="error"] { background: var(--danger-bg); border-color: var(--danger); color: #e88070; }
 .toast[data-kind="success"] { background: var(--success-bg); border-color: var(--success); color: var(--success); }
+/* An actionable toast (e.g. "Desfazer"/Undo) needs real clicks, unlike a
+   plain informational one which sits above the content non-interactively. */
+.toast[data-interactive="true"] {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3);
+  text-align: left;
+  pointer-events: auto;
+}
+.toast__msg { flex: 1; }
+.toast__action {
+  background: none; border: none;
+  color: inherit; font-weight: 700; font-size: 13px;
+  text-decoration: underline; text-underline-offset: 2px;
+  flex: 0 0 auto; padding: 0;
+}
 
 /* ── Common form elements ──────────────────────────────────── */
 .field-input {
@@ -709,6 +723,18 @@ input[type=number] { -moz-appearance: textfield; }
 .browse__empty, .browse__loading {
   text-align: center; color: var(--t3);
   padding: 40px var(--sp-5); font-family: var(--mono); font-size: 13px;
+}
+
+/* Shown above a results list (Inventário search, and the item-search
+   overlay used when adding items to an order) when more items matched
+   than are actually rendered — without it, an item past the cutoff was
+   just silently missing with no clue it existed. */
+.results-truncated-hint {
+  font-size: 12px; color: var(--t3);
+  background: var(--s3); border-radius: var(--r-sm);
+  padding: 10px var(--sp-3);
+  text-align: center;
+  margin-bottom: var(--sp-2);
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -1501,6 +1527,38 @@ select.order-field { padding: 12px var(--sp-4); }
 .push-permission-card__text { font-size: 13px; color: var(--t2); line-height: 1.5; margin: 0 0 var(--sp-5); }
 .push-permission-card__actions { display: flex; gap: var(--sp-3); width: 100%; }
 .push-permission-card__actions .order-action-btn { flex: 1; }
+
+/* Generic confirm dialog (confirmDialog() in app.js) — replaces the native
+   confirm() popup for destructive/important actions so it matches the
+   app's own look instead of an unstyled OS dialog. */
+.confirm-overlay {
+  position: fixed; inset: 0; z-index: 250;
+  background: rgba(0,0,0,0.5);
+  display: flex; align-items: center; justify-content: center;
+  padding: var(--sp-5);
+  animation: confirm-overlay-in 0.15s ease-out;
+}
+.confirm-card {
+  width: 100%; max-width: 340px;
+  background: var(--s1);
+  border-radius: var(--r-lg);
+  padding: var(--sp-5);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.35);
+  animation: confirm-card-in 0.2s ease-out;
+}
+.confirm-card__title { font-size: 16px; font-weight: 700; color: var(--t1); margin-bottom: var(--sp-2); }
+.confirm-card__text { font-size: 14px; color: var(--t2); line-height: 1.5; margin: 0 0 var(--sp-5); }
+.confirm-card__actions { display: flex; gap: var(--sp-3); width: 100%; }
+.confirm-card__actions .order-action-btn { flex: 1; }
+.confirm-card__btn--danger { background: var(--danger); color: var(--bg); }
+@keyframes confirm-overlay-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes confirm-card-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .confirm-overlay, .confirm-card { animation: none; }
+}
 
 /* ═══════════════════════════════════════════════════════════
    RECURSOS (price lists / supplier catalogs)
