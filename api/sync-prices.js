@@ -2,7 +2,7 @@
 //
 // GET/POST /api/sync-prices
 //
-// Pulls the price list from OneDrive, compares it against the live Google
+// Pulls the price list from Google Drive, compares it against the live Google
 // Sheet, and updates Preço for every SKU whose price actually changed.
 // Designed to be called by a Vercel Cron Job on a schedule, but also
 // callable directly (e.g. from a browser) for manual runs and testing.
@@ -54,7 +54,7 @@ module.exports = async (req, res) => {
   } catch (err) {
     console.error('Price list fetch/parse failed:', err);
     res.status(502).json({
-      error: 'Could not fetch or parse the OneDrive price list',
+      error: 'Could not fetch or parse the Google Drive price list',
       detail: err.message,
       summary
     });

@@ -60,7 +60,7 @@
         const decoder = new TextDecoder('iso-8859-1');
         const csv = decoder.decode(buffer);
 
-        const res = await fetch('/api/import-clients', {
+        const res = await fetch('/api/clients?import=1', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ csv })

@@ -78,17 +78,19 @@ Home Screen". It now opens full-screen like a native app.
   automatically) with timestamp, SKU, field, old value, new value — so
   mistakes are traceable.
 
-## Automatic price sync from OneDrive (TABELA_PLACAS.xlsx)
+## Automatic price sync from Google Drive (TABELA.xlsx)
 
 If you maintain prices in a separate Excel file (e.g. exported from other
 software) rather than editing the Google Sheet directly, this syncs that
 file's prices into the Sheet automatically once a day.
 
 ### How it works
-A scheduled job (`api/sync-prices.js`, run by Vercel Cron) downloads your
-OneDrive file, reads each product row, and updates the `Preço` column in
-the Google Sheet for any SKU whose price changed. It does **not** touch
-stock, dimensions, or anything else — only `Preço`. Every change is logged
+A scheduled job (`api/sync-prices.js`, run by Vercel Cron) downloads the
+price list workbook from Google Drive — using the same Google service
+account already set up for Sheets access, no separate credentials needed
+— reads each product row, and updates the `Preço` (and `VALOR COMPRA`)
+columns in the Google Sheet for any SKU whose value changed. It does
+**not** touch stock, dimensions, or anything else. Every change is logged
 to the same `StockLog` tab the app already writes to.
 
 The parser specifically handles this file's real structure (verified
@@ -99,11 +101,13 @@ or a number.
 
 ### Setup
 
-**1. Get a OneDrive share link**
-In OneDrive, right-click the price list file → Share → copy the link
-(anyone-with-the-link is fine — it only grants read access to that one
-file). Paste that full link as the `PRICE_LIST_ONEDRIVE_URL` environment
-variable in Vercel.
+**1. Share the file with the service account**
+In Google Drive, right-click the price list file → Share → add
+`wharehouse-bot@webiste-gmail-smtp.iam.gserviceaccount.com` as a Viewer
+(the same account already used for Sheets access). If you're using a
+different file than the one already hardcoded as the default, copy its ID
+from the URL (`https://drive.google.com/file/d/FILE_ID_HERE/view`) and set
+it as the `PRICE_LIST_DRIVE_FILE_ID` environment variable in Vercel.
 
 **2. Set a cron secret (recommended)**
 Add a `CRON_SECRET` environment variable with any long random string —
@@ -114,20 +118,6 @@ the URL directly.
 **3. Redeploy**
 Push to GitHub (or redeploy in the Vercel dashboard) so the new
 `vercel.json` cron configuration and dependencies take effect.
-
-### Important caveat: the OneDrive fetch method is unofficial
-
-Converting a OneDrive share link into a direct-download URL relies on an
-**undocumented Microsoft API trick**, not an officially supported method.
-It may already be unreliable, and Microsoft can break it at any time
-without notice. If `/api/sync-prices` starts failing with a fetch error,
-this is the most likely cause.
-
-The properly-supported fix at that point is registering a real Azure AD
-app and using the Microsoft Graph API with OAuth — more setup than the
-share-link trick, but stable. The parsing logic in `lib/priceList.js`
-would not need to change at all; only `fetchPriceListBuffer()` would be
-swapped for a Graph API call.
 
 ### Manually triggering a sync
 Visit `https://your-app.vercel.app/api/sync-prices` directly in a browser

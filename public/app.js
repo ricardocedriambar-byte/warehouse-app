@@ -2054,7 +2054,7 @@ function renderOrderPick(order, isDraft) {
         </div>` : ''}
 
       <div class="pick-lines">
-        ${order.lines.map(line => {
+        ${order.lines.map((line, lineIndex) => {
           const done = line.qtyPicked >= line.qtyOrdered;
           const perUnitArea = (line.unidade === 'm²' && line.comprimento && line.largura)
             ? (line.comprimento * line.largura) / 1_000_000 : 0;
@@ -2074,7 +2074,7 @@ function renderOrderPick(order, isDraft) {
           const isDoorLine = /^PORTA-/.test(line.sku);
           const isIndented = /^\s/.test(line.descricao || '');
           return `
-            <div class="pick-line" data-sku="${line.sku}" data-done="${done}" data-per-unit-area="${perUnitArea}">
+            <div class="pick-line" data-sku="${line.sku}" data-line-index="${lineIndex}" data-done="${done}" data-per-unit-area="${perUnitArea}">
               <div class="pick-line__top">
                 ${isDoorLine ? '' : `<span class="pick-line__sku">${line.sku}</span>`}
                 <span class="pick-line__qty-badge" data-done="${done}">${line.qtyPicked}/${line.qtyOrdered} ${line.unidade||'un'}${unitsEquiv}</span>
@@ -2191,13 +2191,18 @@ function renderOrderPick(order, isDraft) {
   // Pick confirm buttons
   panel.querySelectorAll('.pick-line').forEach(lineEl => {
     const sku          = lineEl.dataset.sku;
+    const lineIndex    = Number(lineEl.dataset.lineIndex);
     const perUnitArea  = parseFloat(lineEl.dataset.perUnitArea) || 0;
     const confirmBtn   = lineEl.querySelector('.pick-line__confirm-btn');
     const qtyInput     = lineEl.querySelector('.pick-line__qty-input');
     const unitSelect   = lineEl.querySelector('.pick-line__unit-select');
     if (!confirmBtn || !qtyInput) return;
 
-    const line = order.lines.find(l => l.sku === sku);
+    // Looked up by position, not by SKU — two lines in the same order can
+    // share a SKU (the same catalog item added twice, or two "no SKU"
+    // ad-hoc products, which both read back as the placeholder "—"), and
+    // matching by SKU alone would resolve to the wrong line in that case.
+    const line = order.lines[lineIndex];
     const remainingNative = line ? (line.qtyOrdered - line.qtyPicked) : 0;
 
     // Re-express the current input value when the unit toggle changes,
@@ -2220,7 +2225,7 @@ function renderOrderPick(order, isDraft) {
         : entered;
       confirmBtn.textContent = 'A guardar…'; confirmBtn.disabled = true;
       try {
-        await apiPost('/api/pick-line', { orderId: order.orderId, sku, qtyPicked: qty });
+        await apiPost('/api/pick-line', { orderId: order.orderId, sku, qtyPicked: qty, lineIndex });
         const data = await apiGet(`/api/orders?id=${order.orderId}`);
         orderState.currentOrder = data.order;
         const idx = orderState.orders.findIndex(o => o.orderId === order.orderId);
@@ -2504,7 +2509,7 @@ function renderAdminPanel() {
     <div class="admin-section-title">Sincronização de preços</div>
     <div class="admin-card">
       <p style="font-size:13px;color:var(--t2);margin:0 0 var(--sp-3)">
-        Atualiza os preços do catálogo a partir da lista de preços no OneDrive.
+        Atualiza os preços do catálogo a partir da lista de preços no Google Drive.
       </p>
       <button class="btn-ghost" id="admin-sync-btn" style="width:100%">Sincronizar agora</button>
     </div>

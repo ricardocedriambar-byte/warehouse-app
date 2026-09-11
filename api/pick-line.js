@@ -1,9 +1,13 @@
 // api/pick-line.js
 // POST /api/pick-line
-// body: { orderId, sku, qtyPicked }
+// body: { orderId, sku, qtyPicked, lineIndex }
 //
 // Marks a line as picked (fully or partially) and decrements stock in
 // the Etiquetas sheet by the quantity picked. Logs both changes.
+//
+// lineIndex is the line's position within order.lines (see public/app.js's
+// renderOrderPick) — needed so lib/orders.js's updateLinePicked updates the
+// exact sheet row even when two lines in the order share the same SKU.
 
 const { updateLinePicked } = require('../lib/orders');
 const { findItemBySku, adjustStock, appendLogEntry, adjustReservado } = require('../lib/sheets');
@@ -15,7 +19,7 @@ module.exports = async (req, res) => {
   }
 
   try {
-    const { orderId, sku, qtyPicked } = req.body || {};
+    const { orderId, sku, qtyPicked, lineIndex } = req.body || {};
     if (!orderId || !sku) { res.status(400).json({ error: 'orderId and sku are required' }); return; }
     if (qtyPicked === undefined || qtyPicked === null) { res.status(400).json({ error: 'qtyPicked is required' }); return; }
 
@@ -23,7 +27,7 @@ module.exports = async (req, res) => {
     if (isNaN(qty) || qty < 0) { res.status(400).json({ error: 'qtyPicked must be a non-negative number' }); return; }
 
     // Update the picked quantity on the order line
-    await updateLinePicked(orderId, sku, qty);
+    await updateLinePicked(orderId, sku, qty, lineIndex);
 
     // Decrement stock in the Etiquetas sheet.
     //
