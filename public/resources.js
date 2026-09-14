@@ -127,7 +127,26 @@ async function applyFornecedorLogo(fornecedor) {
 
   const domain = await resolveFornecedorDomain(fornecedor);
   if (!domain) return;
-  setFornecedorIcon(fornecedor, `https://www.google.com/s2/favicons?sz=64&domain=${encodeURIComponent(domain)}`);
+  const logoUrl = `https://www.google.com/s2/favicons?sz=64&domain=${encodeURIComponent(domain)}`;
+  setFornecedorIcon(fornecedor, logoUrl);
+  persistDiscoveredLogo(fornecedor, logoUrl);
+}
+
+// Saves a logo found via Clearbit/favicon lookup into the LogosFornecedores
+// sheet tab (see lib/sheets.js's saveFornecedorLogo), so it comes back as
+// resourcesLogoOverrides — a "manual" override — on every load from now on,
+// instead of this tab re-running the Clearbit lookup every time the app
+// opens. Also updates the in-memory overrides map right away so re-opening
+// this list later in the same session (without a full reload) skips
+// resolveFornecedorDomain too. Fire-and-forget: if the save fails, the
+// worst case is just looking the domain up again next time.
+function persistDiscoveredLogo(fornecedor, logoUrl) {
+  resourcesLogoOverrides[fornecedor] = logoUrl;
+  fetch('/api/resources', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fornecedor, logoUrl })
+  }).catch(() => {});
 }
 
 function setFornecedorIcon(fornecedor, src) {

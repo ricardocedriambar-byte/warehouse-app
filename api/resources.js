@@ -24,12 +24,35 @@
 // file. Each of those requests is still small enough that buffering it
 // in this function before sending is effectively instant — this isn't
 // the full-file buffering that used to be the problem.
+//
+// POST /api/resources -> { fornecedor, logoUrl } persists a supplier logo
+// the frontend discovered on its own (Clearbit domain lookup + Google
+// favicon, see public/resources.js) into the LogosFornecedores tab, so
+// it's returned as a "manual" override (above) on every load after this
+// one instead of being looked up again from scratch every time the app
+// opens.
 
 const { getResources, fetchFileMedia } = require('../lib/resources');
-const { getFornecedorLogos } = require('../lib/sheets');
+const { getFornecedorLogos, saveFornecedorLogo } = require('../lib/sheets');
 
 module.exports = async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
+
+  if (req.method === 'POST') {
+    try {
+      const { fornecedor, logoUrl } = req.body || {};
+      if (!fornecedor || !logoUrl) {
+        res.status(400).json({ error: 'fornecedor e logoUrl são obrigatórios' });
+        return;
+      }
+      await saveFornecedorLogo(fornecedor, logoUrl);
+      res.status(200).json({ ok: true });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: 'Failed to save logo' });
+    }
+    return;
+  }
 
   if (req.method !== 'GET') {
     res.status(405).json({ error: 'Method not allowed' });
