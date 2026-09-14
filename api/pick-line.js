@@ -39,7 +39,9 @@ module.exports = async (req, res) => {
     // qty = 60 (m²) — decrementing STOCK by 60 would be wrong by a factor
     // of 5. So convert back down to piece count using the item's
     // dimensaoM2 (quantity-per-package) before touching STOCK.
-    const item = await findItemBySku(sku);
+    // Fed into adjustReservado below as its baseline (item.reservado), so
+    // this must be a live read, not a cached snapshot.
+    const item = await findItemBySku(sku, { fresh: true });
     if (item) {
       const piecesPicked = (item.unidade && item.unidade !== 'un' && item.dimensaoM2)
         ? qty / item.dimensaoM2
