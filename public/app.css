@@ -43,6 +43,8 @@
   --danger: #c05a4a;
   --danger-bg: rgba(192,90,74,0.12);
   --warning: #c8883c;
+  --info: #70a8dc;
+  --info-bg: rgba(24,95,165,0.2);
 
   /* Accent — timber brown for primary CTAs */
   --accent: #c07e38;
@@ -91,6 +93,82 @@
      used for the accent's flat fill/hover, just no longer flat. */
   --accent-grad: linear-gradient(155deg, var(--accent-hover), var(--accent));
   --id-grad: linear-gradient(155deg, var(--green-400), var(--id));
+}
+
+/* ============================================================
+   THEME: "Ficha de Armazém" — a light, paper-and-ink alternative
+   to the default dark theme. Opt-in from Definições → Tema; applied
+   via data-theme="paper" on <html> (set/persisted by the inline
+   script in index.html's <head>, so it's live before first paint —
+   see window.setCedriambarTheme there). Every component below reads
+   colors, radii and shadows through the custom properties above, so
+   overriding just those here re-skins the whole app; the few spots
+   that had hardcoded colors instead of a var were fixed in place
+   (see --info/--info-bg above, and .btn-primary / .doors-tipo-toggle
+   button.active below) so this block doesn't need per-component
+   overrides for them.
+   ============================================================ */
+:root[data-theme="paper"] {
+  /* Surface scale — warm paper, not a dark-mode inversion */
+  --bg: #f2ede1;
+  --s1: #f8f4ea;
+  --s2: #ece4cf;
+  --s3: #e4dabd;
+  --s4: #d8cba6;
+
+  /* Text — ink on paper */
+  --t1: #1c1710;
+  --t2: #5c5341;
+  --t3: #8f8567;
+
+  /* Borders — ink hairlines instead of white ones */
+  --b1: rgba(20,16,8,0.14);
+  --b2: rgba(20,16,8,0.26);
+  --b3: rgba(20,16,8,0.4);
+
+  /* Semantic — same hues, re-tuned for a light ground */
+  --success: #1f6b3f;
+  --success-bg: rgba(31,107,63,0.12);
+  --danger: #a8402c;
+  --danger-bg: rgba(168,64,44,0.12);
+  --warning: #92601f;
+  --info: #2c5f9e;
+  --info-bg: rgba(44,95,158,0.14);
+
+  /* Accent — timber ink brown */
+  --accent: #9d5f28;
+  --accent-hover: #c07e38;
+  --accent-dim: rgba(157,95,40,0.16);
+
+  /* Identity — forest ink green */
+  --id: #1f6b3f;
+  --id-dim: rgba(31,107,63,0.14);
+
+  /* Avatar chips (.topbar__user-avatar etc. use --green-700/--green-300
+     directly) — light chip, dark ink initial instead of the reverse */
+  --green-700: #dfeee2;
+  --green-300: #1f6b3f;
+
+  /* Radius — flat, ledger-like; never fully square so presses still
+     read as buttons rather than table cells */
+  --r-sm: 2px;
+  --r-md: 3px;
+  --r-lg: 4px;
+  --r-full: 3px;
+
+  /* Elevation — a ruled hairline "seam" instead of a drop shadow, to
+     match a paper form's boxes rather than floating cards */
+  --shadow-sm: 0 0 0 1px var(--b2);
+  --shadow-md: 0 0 0 1.5px var(--b2);
+  --shadow-lg: 0 0 0 1.5px var(--b3);
+
+  /* Typography — lean on a monospace with more of a typewriter/ledger
+     character where it's available locally; falls back silently like
+     the default theme's own 'JetBrains Mono' reference already does,
+     so this never depends on a network font fetch (this app runs
+     offline via the service worker, and past bugs here have come from
+     external CDN fonts/scripts being blocked on-site). */
+  --mono: 'IBM Plex Mono', 'SF Mono', ui-monospace, monospace;
 }
 
 /* ── Reset ─────────────────────────────────────────────────── */
@@ -358,7 +436,7 @@ input[type=number] { -moz-appearance: textfield; }
 
 .btn-primary {
   background: var(--accent-grad);
-  color: #0c100d;
+  color: var(--bg);
   border: none;
   border-radius: var(--r-md);
   padding: 14px var(--sp-6);
@@ -812,7 +890,7 @@ input[type=number] { -moz-appearance: textfield; }
   padding: 3px 8px; border-radius: var(--r-full);
   background: var(--s3); color: var(--t3);
 }
-.order-card__status[data-status="Enviado"] { background: rgba(24,95,165,0.2); color: #70a8dc; }
+.order-card__status[data-status="Enviado"] { background: var(--info-bg); color: var(--info); }
 .order-card__status[data-status="Em separação"] { background: var(--accent-dim); color: var(--accent); }
 .order-card__status[data-status="Concluído"] { background: var(--success-bg); color: var(--success); }
 .order-card__status[data-status="Cancelado"] { background: var(--danger-bg); color: var(--danger); opacity: 0.7; }
@@ -1456,7 +1534,7 @@ select.order-field { padding: 12px var(--sp-4); }
   flex: 1; padding: 8px 4px; font-size: 12px; border-radius: var(--r-sm);
   border: 1px solid var(--b1); background: var(--s3); color: var(--t2);
 }
-.doors-tipo-toggle button.active { background: var(--accent); color: #0c100d; border-color: var(--accent); font-weight: 600; }
+.doors-tipo-toggle button.active { background: var(--accent); color: var(--bg); border-color: var(--accent); font-weight: 600; }
 
 .doors-travessao-row { margin-bottom: var(--sp-2); }
 
@@ -1804,6 +1882,31 @@ select.order-field { padding: 12px var(--sp-4); }
 }
 .avatar-color-swatch[data-selected="true"] { border-color: var(--t1); transform: scale(1.1); }
 .avatar-color-swatch:active { transform: scale(0.92); }
+
+/* Theme picker — Definições → Tema */
+.theme-picker { display: flex; flex-direction: column; gap: var(--sp-2); }
+.theme-option {
+  display: flex; align-items: center; gap: var(--sp-3);
+  width: 100%; text-align: left;
+  background: var(--s2);
+  border: 1px solid var(--b1);
+  border-radius: var(--r-md);
+  padding: var(--sp-3) var(--sp-4);
+  color: var(--t1);
+  transition: background var(--tx), border-color var(--tx), transform var(--tx-fast);
+}
+.theme-option:active { transform: scale(0.99); }
+.theme-option[data-selected="true"] { border-color: var(--id); background: var(--id-dim); }
+.theme-option__swatch {
+  width: 34px; height: 34px; flex: 0 0 34px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--b2);
+}
+.theme-option__info { flex: 1; min-width: 0; }
+.theme-option__name { font-size: 14px; font-weight: 600; }
+.theme-option__desc { font-size: 12px; color: var(--t3); margin-top: 2px; }
+.theme-option__check { flex: 0 0 auto; color: var(--id); opacity: 0; transition: opacity var(--tx); }
+.theme-option[data-selected="true"] .theme-option__check { opacity: 1; }
 
 .admin-section-title {
   font-size: 15px; font-weight: 600; color: var(--t1);

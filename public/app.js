@@ -21,6 +21,19 @@ function roleLabel(role) { return ROLE_LABELS[role] || role; }
 // so the defaults stay familiar.
 const AVATAR_COLORS = ['#2e9e68', '#c07e38', '#4a9e6a', '#5b8dee', '#c05a4a', '#9d6228', '#8a63d2', '#3fa7c4'];
 
+// Themes offered in Definições → Tema. Applied instantly (no "Guardar"
+// needed) via window.setCedriambarTheme, defined in index.html's <head> so
+// the choice also survives to the next app launch with no flash of the
+// wrong theme. This is a per-device display preference, not account data,
+// so it only lives in localStorage — it isn't sent to /api/users.
+const THEME_OPTIONS = [
+  { value: 'dark', name: 'Escuro (padrão)', desc: 'Verde-floresta e madeira sobre fundo escuro', swatch: 'linear-gradient(135deg, #0c100d 50%, #2e9e68 50%)' },
+  { value: 'paper', name: 'Ficha de Armazém', desc: 'Claro, estilo papel e carimbo', swatch: 'linear-gradient(135deg, #f2ede1 50%, #9d5f28 50%)' },
+];
+function currentCedriambarTheme() {
+  return document.documentElement.getAttribute('data-theme') === 'paper' ? 'paper' : 'dark';
+}
+
 function saveAuth(user) {
   auth.user = user;
   localStorage.setItem(AUTH_KEY, JSON.stringify(user));
@@ -2661,6 +2674,22 @@ function renderSettingsForm(panel, u) {
       </div>
     </div>
 
+    <div class="section-label">Tema</div>
+    <div class="settings-card">
+      <div class="theme-picker" id="theme-picker">
+        ${THEME_OPTIONS.map(t => `
+          <button type="button" class="theme-option" data-theme-value="${t.value}" data-selected="${currentCedriambarTheme() === t.value}">
+            <span class="theme-option__swatch" style="background:${t.swatch}"></span>
+            <span class="theme-option__info">
+              <span class="theme-option__name">${t.name}</span>
+              <span class="theme-option__desc">${t.desc}</span>
+            </span>
+            <svg class="theme-option__check" viewBox="0 0 24 24" width="18" height="18"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        `).join('')}
+      </div>
+    </div>
+
     <button class="btn-primary" id="settings-save-btn" style="width:100%;margin-top:var(--sp-2)">Guardar</button>
   `;
 
@@ -2678,6 +2707,16 @@ function renderSettingsForm(panel, u) {
       panel.querySelectorAll('.avatar-color-swatch').forEach(s => s.dataset.selected = String(s === sw));
       const preview = $('#settings-avatar-preview');
       if (preview) preview.style.background = selectedColor;
+    });
+  });
+
+  // Theme applies immediately on tap — it's a device display preference
+  // (see THEME_OPTIONS above), not account data, so there's no need to
+  // wait for "Guardar" or round-trip it through /api/users.
+  panel.querySelectorAll('.theme-option').forEach(btn => {
+    btn.addEventListener('click', () => {
+      window.setCedriambarTheme?.(btn.dataset.themeValue);
+      panel.querySelectorAll('.theme-option').forEach(b => b.dataset.selected = String(b === btn));
     });
   });
 

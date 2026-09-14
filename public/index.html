@@ -3,13 +3,40 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
-  <meta name="theme-color" content="#0c100d" />
+  <meta name="theme-color" content="#0c100d" id="theme-color-meta" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Cedriambar" />
   <link rel="manifest" href="/manifest.json" />
   <link rel="apple-touch-icon" href="/icons/icon-192.png" />
   <title>Cedriambar — Gestão de Stock</title>
+  <!-- Applies the saved theme (Definições → Tema) before app.css paints, so
+       there's no flash of the default dark theme on load. Exposes
+       window.setCedriambarTheme(name) so app.js's settings screen can
+       switch themes live without duplicating this logic. -->
+  <script>
+    (function () {
+      var KEY = 'cedriambar_theme';
+      var THEME_COLORS = { dark: '#0c100d', paper: '#f2ede1' };
+      function apply(theme) {
+        var meta = document.getElementById('theme-color-meta');
+        if (theme === 'paper') {
+          document.documentElement.setAttribute('data-theme', 'paper');
+        } else {
+          document.documentElement.removeAttribute('data-theme');
+        }
+        if (meta) meta.setAttribute('content', THEME_COLORS[theme] || THEME_COLORS.dark);
+      }
+      var saved = 'dark';
+      try { saved = localStorage.getItem(KEY) === 'paper' ? 'paper' : 'dark'; } catch (e) {}
+      apply(saved);
+      window.setCedriambarTheme = function (theme) {
+        theme = theme === 'paper' ? 'paper' : 'dark';
+        try { localStorage.setItem(KEY, theme); } catch (e) {}
+        apply(theme);
+      };
+    })();
+  </script>
   <link rel="stylesheet" href="/app.css" />
 </head>
 <body style="overscroll-behavior:none; overflow:hidden; touch-action:pan-x pan-y;">
