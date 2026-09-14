@@ -391,6 +391,19 @@ const prefersReducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduc
 let currentViewName = document.querySelector('.view[data-active="true"]')?.dataset.view || 'scan';
 let viewAnimating = false;
 
+// Holds the in-flight transition's own cancel hook, so a rapid second tap
+// can properly tear down the previous transition (detach its
+// transitionend listener, clear its safety timeout) instead of just
+// resetting its elements' transform/dataset and leaving those callbacks
+// armed. A .view element gets reused as toEl in one transition and fromEl
+// in the next under quick successive taps, and those stale callbacks —
+// still holding the PREVIOUS transition's fromEl/toEl — would then fire
+// off a later, unrelated transitionend on that shared element, wiping
+// viewAnimating and the dataset flags out from under the transition that
+// was actually still running. That's what let two+ views end up visibly
+// overlapping when switching tabs quickly: see animateViewSwap below.
+let activeSwap = null;
+
 // Slides `fromEl` out and `toEl` in. direction: 'forward' slides the new
 // view in from the right (going deeper / rightward in the tab order);
 // 'back' slides it in from the left. Falls back to an instant swap when
@@ -401,14 +414,10 @@ function animateViewSwap(fromEl, toEl, direction) {
     toEl.dataset.active = 'true';
     return;
   }
-  if (viewAnimating) {
-    // An earlier transition is still mid-flight — snap it to its end state
-    // instantly rather than letting two animations fight over the same
-    // elements.
-    $$('.view[data-animating="true"]').forEach(el => {
-      el.dataset.animating = 'false';
-      el.style.transform = '';
-    });
+  if (activeSwap) {
+    // An earlier transition is still mid-flight. Cancel it properly —
+    // see the note on `activeSwap` above — before starting this one.
+    activeSwap.cancel();
   }
   viewAnimating = true;
   const enterFrom = direction === 'back' ? '-100%' : '100%';
@@ -437,6 +446,7 @@ function animateViewSwap(fromEl, toEl, direction) {
   });
 
   let done = false;
+  let timeoutId;
   const cleanup = () => {
     if (done) return;
     done = true;
@@ -446,6 +456,8 @@ function animateViewSwap(fromEl, toEl, direction) {
     fromEl.style.transform = '';
     toEl.style.transform = '';
     toEl.removeEventListener('transitionend', onTransitionEnd);
+    clearTimeout(timeoutId);
+    activeSwap = null;
     viewAnimating = false;
   };
   const onTransitionEnd = (e) => {
@@ -454,7 +466,21 @@ function animateViewSwap(fromEl, toEl, direction) {
   toEl.addEventListener('transitionend', onTransitionEnd);
   // Safety net in case transitionend never fires (e.g. the tab is
   // backgrounded mid-animation).
-  setTimeout(cleanup, VIEW_TX_MS + 80);
+  timeoutId = setTimeout(cleanup, VIEW_TX_MS + 80);
+
+  activeSwap = {
+    cancel() {
+      if (done) return;
+      done = true;
+      toEl.removeEventListener('transitionend', onTransitionEnd);
+      clearTimeout(timeoutId);
+      fromEl.dataset.animating = 'false';
+      toEl.dataset.animating = 'false';
+      fromEl.style.transform = '';
+      toEl.style.transform = '';
+      viewAnimating = false;
+    },
+  };
 }
 
 function setView(name, { pushHistory = true, direction } = {}) {
