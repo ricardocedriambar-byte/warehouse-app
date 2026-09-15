@@ -486,6 +486,12 @@ function animateViewSwap(fromEl, toEl, direction) {
 function setView(name, { pushHistory = true, direction } = {}) {
   const fromName = currentViewName;
   if (name !== fromName) {
+    // Leaving order-create by ANY route (back button, a tab tap, the
+    // browser/gesture back navigation) must stop the draft-autosave
+    // interval — otherwise it keeps polling a screen that's no longer
+    // showing, and a later "Nova encomenda" open would start a fresh
+    // interval on top of it.
+    if (fromName === 'order-create' && typeof stopOrderDraftAutosave === 'function') stopOrderDraftAutosave();
     if (direction === undefined) {
       const fromIdx = TAB_ORDER.indexOf(fromName);
       const toIdx = TAB_ORDER.indexOf(name);
@@ -1368,6 +1374,113 @@ async function openOrderDetail(orderId, direction) {
 }
 
 // ═══════════════════════════════════════════════════════════
+// ORDER DRAFT AUTOSAVE
+// ═══════════════════════════════════════════════════════════
+// A brand-new order used to live only in orderState (plain in-memory
+// variables) while being built — closing the app, a reload, or the phone
+// just getting interrupted (a call, switching app mid-pick) silently threw
+// away everything typed so far, with no warning. This snapshots the
+// in-progress order into localStorage as it's built, and offers to restore
+// it the next time "Nova encomenda" opens — the same idea as a browser
+// keeping an unsent email draft. Only applies to creating a brand-new
+// order: editing an existing one already lives on the server, so there's
+// nothing extra at risk there.
+const ORDER_DRAFT_KEY = 'cedriambar_order_draft_v1';
+let orderDraftAutosaveTimer = null;
+// Set once by openNewOrderCreate() right before it calls renderOrderCreate(),
+// and consumed there — this is what tells that ONE call "restore from the
+// saved draft" without affecting any other call to renderOrderCreate()
+// (e.g. the internal re-renders elsewhere in this file), which must keep
+// whatever is already in orderState untouched.
+let pendingOrderDraftRestore = null;
+
+function captureOrderDraft() {
+  if (orderState.editingOrder) return null; // editing an existing order isn't drafted here
+  const isPortas = orderState.newOrderType === 'Portas';
+  const notes = $('#order-notes-input')?.value || '';
+  const doorsData = isPortas ? getDoorsOrderPayload().doorsData : null;
+  const hasContent = !!orderState.newOrderClient
+    || orderState.newOrderLines.length > 0
+    || !!notes.trim()
+    || (isPortas && doorsHasContent());
+  if (!hasContent) return null; // nothing worth persisting yet — avoids a stray empty draft
+
+  return {
+    orderType: orderState.newOrderType,
+    client: orderState.newOrderClient,
+    lines: orderState.newOrderLines,
+    notes,
+    doorsData,
+    savedAt: new Date().toISOString()
+  };
+}
+
+function saveOrderDraft() {
+  try {
+    const draft = captureOrderDraft();
+    if (draft) localStorage.setItem(ORDER_DRAFT_KEY, JSON.stringify(draft));
+    else localStorage.removeItem(ORDER_DRAFT_KEY);
+  } catch (err) {
+    // best-effort — a full/blocked localStorage just means no autosave this time
+  }
+}
+const debouncedSaveOrderDraft = debounce(saveOrderDraft, 600);
+
+function loadOrderDraft() {
+  try {
+    const raw = localStorage.getItem(ORDER_DRAFT_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function clearOrderDraft() {
+  try { localStorage.removeItem(ORDER_DRAFT_KEY); } catch {}
+}
+
+function handleOrderDraftVisibilityChange() {
+  // Catches the "phone call interrupts a pick" case immediately, rather
+  // than waiting for the periodic save below — the app can be killed in
+  // the background at any point after this fires.
+  if (document.visibilityState === 'hidden') saveOrderDraft();
+}
+
+// Runs only while the create-order screen is open. The periodic tick is
+// what catches changes inside the Portas builder (doors.js owns that state
+// independently, with no single change hook to tap into from here) — every
+// other action calls saveOrderDraft()/debouncedSaveOrderDraft() directly
+// for a more immediate save.
+function startOrderDraftAutosave() {
+  stopOrderDraftAutosave();
+  orderDraftAutosaveTimer = setInterval(saveOrderDraft, 4000);
+  document.addEventListener('visibilitychange', handleOrderDraftVisibilityChange);
+}
+
+function stopOrderDraftAutosave() {
+  if (orderDraftAutosaveTimer) { clearInterval(orderDraftAutosaveTimer); orderDraftAutosaveTimer = null; }
+  document.removeEventListener('visibilitychange', handleOrderDraftVisibilityChange);
+}
+
+// Entry point for "+ Nova encomenda" — the only place a saved draft should
+// ever be offered for restoration. An internal re-render mid-session (like
+// after saving a new client) must never re-trigger this.
+function openNewOrderCreate() {
+  const draft = loadOrderDraft();
+  pendingOrderDraftRestore = draft;
+  renderOrderCreate();
+  if (draft) {
+    toast('Rascunho anterior restaurado', 'default', {
+      actionLabel: 'Descartar',
+      onAction: () => {
+        clearOrderDraft();
+        renderOrderCreate();
+      }
+    });
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
 // ORDER CREATE
 // ═══════════════════════════════════════════════════════════
 // `existingOrder` (optional) switches this into edit mode: it reopens an
@@ -1377,6 +1490,14 @@ async function openOrderDetail(orderId, direction) {
 function renderOrderCreate(existingOrder = null) {
   orderState.editingOrder = existingOrder || null;
   const isEditing = !!existingOrder;
+
+  // Consumed once, right here — set by openNewOrderCreate() just before it
+  // calls this function. Any OTHER call to renderOrderCreate() with no
+  // existingOrder (e.g. after saving a new client mid-order, below) must
+  // NOT pick this up, since orderState already holds whatever the person
+  // is actively working on at that point.
+  const restoredDraft = isEditing ? null : pendingOrderDraftRestore;
+  pendingOrderDraftRestore = null;
 
   orderState.newOrderLines = isEditing
     ? existingOrder.lines.filter(l => !/^PORTA-/.test(l.sku)).map(l => {
@@ -1389,14 +1510,16 @@ function renderOrderCreate(existingOrder = null) {
         const catalogItem = state.items.find(i => i.sku === l.sku);
         return { ...l, qtyMode: l.unidade || 'un', dimensaoM2: catalogItem ? catalogItem.dimensaoM2 : null };
       })
-    : [];
+    : (restoredDraft ? restoredDraft.lines : []);
   orderState.newOrderClient = isEditing
     ? (orderState.clients.find(c => c.id === existingOrder.clientId) || { id: existingOrder.clientId, name: existingOrder.clientName })
-    : null;
-  orderState.newOrderType = isEditing ? (existingOrder.orderType || 'Normal') : 'Normal';
+    : (restoredDraft ? restoredDraft.client : null);
+  orderState.newOrderType = isEditing ? (existingOrder.orderType || 'Normal') : (restoredDraft ? restoredDraft.orderType : 'Normal');
   resetDoorsBuilder();
   if (isEditing && orderState.newOrderType === 'Portas' && existingOrder.doorsData) {
     seedDoorsBuilder(existingOrder.doorsData);
+  } else if (restoredDraft && orderState.newOrderType === 'Portas' && restoredDraft.doorsData) {
+    seedDoorsBuilder(restoredDraft.doorsData);
   }
 
   const panel = $('#order-create-panel');
@@ -1414,8 +1537,8 @@ function renderOrderCreate(existingOrder = null) {
         ${isEditing
           ? `<div class="order-field-locked">${isPortas ? 'Portas' : 'Normal'}</div>`
           : `<div class="doors-tipo-toggle" id="order-type-toggle">
-               <button type="button" data-val="Normal" class="active">Normal</button>
-               <button type="button" data-val="Portas">Portas</button>
+               <button type="button" data-val="Normal" class="${isPortas ? '' : 'active'}">Normal</button>
+               <button type="button" data-val="Portas" class="${isPortas ? 'active' : ''}">Portas</button>
              </div>`}
       </div>
 
@@ -1451,7 +1574,7 @@ function renderOrderCreate(existingOrder = null) {
       <div class="order-create__section">
         <div class="section-label">Notas</div>
         <textarea class="order-field" id="order-notes-input" rows="3"
-          placeholder="Notas opcionais…" style="resize:none">${dpEsc(existingOrder?.orderNotes || '')}</textarea>
+          placeholder="Notas opcionais…" style="resize:none">${dpEsc(existingOrder?.orderNotes || (restoredDraft ? restoredDraft.notes : '') || '')}</textarea>
       </div>
 
       <div class="order-actions">
@@ -1470,7 +1593,7 @@ function renderOrderCreate(existingOrder = null) {
   if (isEditing) {
     panel.querySelector('#save-edit-btn').addEventListener('click', () => confirmAndSaveOrderEdit());
   } else {
-    panel.querySelector('#new-client-btn').addEventListener('click', () => showNewClientForm());
+    panel.querySelector('#new-client-btn').addEventListener('click', () => showNewClientForm(panel));
     panel.querySelector('#save-draft-btn').addEventListener('click', () => submitOrder('Rascunho'));
     panel.querySelector('#send-order-btn').addEventListener('click', () => confirmAndSendOrder());
 
@@ -1487,38 +1610,59 @@ function renderOrderCreate(existingOrder = null) {
         panel.querySelector('#order-lines-label').textContent = isPortasNow ? 'Outros materiais (placas, ferragens, etc.)' : 'Artigos';
         panel.querySelector('#order-doors-section').style.display = isPortasNow ? '' : 'none';
         if (isPortasNow) renderDoorsBuilder(panel.querySelector('#dp-embed-root'));
+        saveOrderDraft();
       });
     });
 
     wireClientSearch(panel);
+    // A restored draft (or, in principle, any other path that pre-fills
+    // newOrderClient before this point) needs its chip shown right away —
+    // the search box otherwise renders blank even though a client is
+    // already selected underneath.
+    if (orderState.newOrderClient) applySelectedClient(panel, orderState.newOrderClient);
+    startOrderDraftAutosave();
   }
 
   if (isPortas) renderDoorsBuilder(panel.querySelector('#dp-embed-root'));
   renderOrderLines();
 }
 
-function wireClientSearch(root) {
+// Swaps the client search box for the picked client's chip, in place —
+// shared by wireClientSearch's own result rows below and by the "+ Novo
+// cliente" form's save handler. Previously the new-client path just called
+// renderOrderCreate() again to pick up the freshly created client, but that
+// function always resets orderState.newOrderLines to [] when called with no
+// existingOrder — so adding a client mid-order silently wiped out every
+// artigo already added. Updating the DOM/state directly here avoids that
+// re-render (and the data loss) entirely.
+function applySelectedClient(root, client) {
   const input    = root.querySelector('#client-search-input');
   const results  = root.querySelector('#client-search-results');
   const selected = root.querySelector('#client-selected');
+  if (!input || !results || !selected) return;
 
-  function selectClient(client) {
-    orderState.newOrderClient = client;
-    input.style.display       = 'none';
+  orderState.newOrderClient = client;
+  input.style.display       = 'none';
+  results.style.display     = 'none';
+  selected.style.display    = 'flex';
+  selected.innerHTML = `
+    <span style="flex:1;font-size:15px;font-weight:600">${client.name}</span>
+    <button id="clear-client-btn" type="button" style="background:none;border:none;font-size:12px;color:var(--t3);font-family:var(--font);cursor:pointer">Alterar</button>`;
+  selected.querySelector('#clear-client-btn').addEventListener('click', () => {
+    orderState.newOrderClient = null;
+    input.style.display       = '';
+    input.value               = '';
+    selected.style.display    = 'none';
     results.style.display     = 'none';
-    selected.style.display    = 'flex';
-    selected.innerHTML = `
-      <span style="flex:1;font-size:15px;font-weight:600">${client.name}</span>
-      <button id="clear-client-btn" type="button" style="background:none;border:none;font-size:12px;color:var(--t3);font-family:var(--font);cursor:pointer">Alterar</button>`;
-    selected.querySelector('#clear-client-btn').addEventListener('click', () => {
-      orderState.newOrderClient = null;
-      input.style.display       = '';
-      input.value               = '';
-      selected.style.display    = 'none';
-      results.style.display     = 'none';
-      input.focus();
-    });
-  }
+    input.focus();
+    saveOrderDraft();
+  });
+  saveOrderDraft();
+}
+
+function wireClientSearch(root) {
+  const input    = root.querySelector('#client-search-input');
+  const results  = root.querySelector('#client-search-results');
 
   function renderResults(q) {
     const ql = q.toLowerCase().trim();
@@ -1543,7 +1687,7 @@ function wireClientSearch(root) {
     results.querySelectorAll('.client-result-row').forEach(row => {
       row.addEventListener('click', () => {
         const c = orderState.clients.find(cl => cl.id === row.dataset.id);
-        if (c) selectClient(c);
+        if (c) applySelectedClient(root, c);
       });
     });
   }
@@ -1641,9 +1785,9 @@ function renderOrderLines() {
     const hasDims       = (line.comprimento || line.largura || line.espessura);
     const discountPct   = line.discountPct || 0;
     const convEquiv = hasConversion && qtyMode === 'un'
-      ? `= ${fmtNumber((line.qtyOrdered||0) * line.dimensaoM2, 3)} ${nativeUnit}`
+      ? `→ ${fmtNumber((line.qtyOrdered||0) * line.dimensaoM2, 3)} ${nativeUnit}`
       : hasConversion && qtyMode === nativeUnit
-      ? `= ${fmtNumber((line.qtyOrdered||0) / line.dimensaoM2, 2)} un`
+      ? `→ ${fmtNumber((line.qtyOrdered||0) / line.dimensaoM2, 2)} un`
       : '';
     const lineTotal = (line.qtyOrdered || 0) * (line.unitPrice || 0) * (1 - discountPct / 100);
 
@@ -1698,6 +1842,7 @@ function renderOrderLines() {
       const idx = parseInt(btn.dataset.remove);
       const [removed] = orderState.newOrderLines.splice(idx, 1);
       renderOrderLines();
+      saveOrderDraft();
       // This "×" is small and one mis-tap used to permanently discard the
       // line — including any quantity/notes typed into it, which for a
       // Portas line can be real work to redo. A brief undo window costs
@@ -1708,6 +1853,7 @@ function renderOrderLines() {
           onAction: () => {
             orderState.newOrderLines.splice(idx, 0, removed);
             renderOrderLines();
+            saveOrderDraft();
           }
         });
       }
@@ -1719,7 +1865,23 @@ function renderOrderLines() {
       const idx  = parseInt(input.dataset.idx);
       const line = orderState.newOrderLines[idx];
       if (input.dataset.field === 'qtymode') {
-        line.qtyMode = input.value;
+        const oldMode = line.qtyMode || 'un';
+        const newMode = input.value;
+        // Switching the toggle used to just relabel the SAME number — type
+        // "30" meaning 30 un, flip to m², and it silently became "30 m²"
+        // instead of the panel's actual area. Converting the value here
+        // means the toggle re-expresses the same real quantity in the
+        // other unit, instead of quietly changing what's being ordered.
+        if (newMode !== oldMode && line.dimensaoM2) {
+          const currentQty = line.qtyOrdered || 0;
+          const converted = oldMode === 'un'
+            ? currentQty * line.dimensaoM2
+            : currentQty / line.dimensaoM2;
+          line.qtyOrdered = Math.round(converted * 1000) / 1000;
+          const qtyInputEl = list.querySelector(`[data-field="qty"][data-idx="${idx}"]`);
+          if (qtyInputEl) qtyInputEl.value = line.qtyOrdered;
+        }
+        line.qtyMode = newMode;
       } else {
         const val = parseFloat(input.value) || 0;
         if (input.dataset.field === 'qty')      line.qtyOrdered   = val;
@@ -1740,12 +1902,13 @@ function renderOrderLines() {
         const qty  = line.qtyOrdered || 0;
         const mode = line.qtyMode || 'un';
         qtyLabel.textContent = mode === 'un'
-          ? `= ${fmtNumber(qty * line.dimensaoM2, 3)} ${nativeUnit}`
-          : `= ${fmtNumber(qty / line.dimensaoM2, 2)} un`;
+          ? `→ ${fmtNumber(qty * line.dimensaoM2, 3)} ${nativeUnit}`
+          : `→ ${fmtNumber(qty / line.dimensaoM2, 2)} un`;
       }
 
       const warnEl = list.querySelector(`#stock-warn-${idx}`);
       if (warnEl) warnEl.textContent = stockWarningText(line);
+      debouncedSaveOrderDraft();
     });
   });
 }
@@ -1853,14 +2016,21 @@ async function showItemSearchOverlay() {
     if (!row) return;
     const item = state.items.find(i => i.sku === row.dataset.sku);
     if (!item) return;
+    // Default the quantity-entry mode to whatever unit the item is actually
+    // priced/quoted in (e.g. m²) instead of always "un" (whole pieces) — a
+    // vendedor thinking in € per m² shouldn't have to remember to flip the
+    // toggle on every single line just to type the number they already
+    // have in mind.
+    const hasConversion = item.unidade && item.unidade !== 'un' && !!item.dimensaoM2;
     orderState.newOrderLines.push({
       sku: item.sku, descricao: item.descricao,
       comprimento: item.comprimento, largura: item.largura, espessura: item.espessura,
       dimensaoM2: item.dimensaoM2, unidade: item.unidade || 'un',
-      qtyMode: 'un', qtyOrdered: 1, unitPrice: item.preco || 0
+      qtyMode: hasConversion ? item.unidade : 'un', qtyOrdered: 1, unitPrice: item.preco || 0
     });
     overlay.remove();
     renderOrderLines();
+    saveOrderDraft();
   });
 
   searchInput.addEventListener('input', debounce(e => renderResults(e.target.value), 120));
@@ -1930,6 +2100,7 @@ function showNewProductForm(prefillQuery, searchOverlay) {
     overlay.remove();
     if (searchOverlay) searchOverlay.remove();
     renderOrderLines();
+    saveOrderDraft();
     toast(`"${descricao}" adicionado à encomenda`, 'success');
   });
 }
@@ -1937,7 +2108,7 @@ function showNewProductForm(prefillQuery, searchOverlay) {
 // ═══════════════════════════════════════════════════════════
 // NEW CLIENT FORM
 // ═══════════════════════════════════════════════════════════
-function showNewClientForm() {
+function showNewClientForm(panel) {
   const overlay = document.createElement('div');
   overlay.className = 'item-search-overlay';
   overlay.innerHTML = `
@@ -2001,8 +2172,12 @@ function showNewClientForm() {
       });
       orderState.clients.push(data.client);
       overlay.remove();
-      renderOrderCreate();
-      orderState.newOrderClient = data.client;
+      // Was renderOrderCreate() — which resets orderState.newOrderLines to
+      // [] whenever called with no existingOrder, so creating a client
+      // mid-order used to silently discard every artigo already added.
+      // applySelectedClient() updates the client chip in place instead.
+      if (panel) applySelectedClient(panel, data.client);
+      else orderState.newOrderClient = data.client;
       toast(`Cliente "${name}" criado`, 'success');
     } catch (err) {
       showError(err, 'Não foi possível criar o cliente. Tente novamente.');
@@ -2102,6 +2277,11 @@ async function sendOrderPayload(payload) {
 
   try {
     const data = await apiPost('/api/orders', payload);
+    // The order is now safely on the server either way (as a real Rascunho
+    // or as Enviado) — the local autosave draft's only job was to survive
+    // until this point, so it'd be actively wrong to offer restoring it
+    // again next time "Nova encomenda" opens.
+    clearOrderDraft();
     await loadOrders({ silent: true });
     renderOrdersList();
     setView('orders');
@@ -3134,7 +3314,7 @@ function init() {
   // New order
   $('#new-order-btn')?.addEventListener('click', async () => {
     if (orderState.clients.length === 0) await loadOrders({ silent: true });
-    renderOrderCreate();
+    openNewOrderCreate();
     setView('order-create');
   });
 

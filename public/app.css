@@ -1133,9 +1133,10 @@ select.order-field { padding: 12px var(--sp-4); }
   padding-left: 2px;
 }
 .order-line-card__equiv {
-  font-family: var(--mono); font-size: 11px; color: var(--t3);
+  font-family: var(--mono); font-size: 12px; font-weight: 700; color: var(--accent);
   margin-top: 6px; min-height: 0;
 }
+.order-line-card__equiv:empty { display: none; }
 .order-line-card__stock-warn {
   font-size: 11px; color: var(--warning);
   margin-top: 4px; min-height: 0;
