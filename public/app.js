@@ -630,6 +630,24 @@ function fmtDateTime(iso) {
   if (Number.isNaN(d.getTime())) return '';
   return d.toLocaleString('pt-PT', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
+// "há 3 horas" / "há 2 dias" style — used for the price sync status card,
+// where "last synced 03/09 06:00" is harder to place at a glance than
+// "last synced 3 hours ago".
+function fmtRelativeTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const diffMs = Date.now() - d.getTime();
+  const diffMin = Math.round(diffMs / 60000);
+  if (diffMin < 1) return 'agora mesmo';
+  if (diffMin < 60) return `há ${diffMin} min`;
+  const diffH = Math.round(diffMin / 60);
+  if (diffH < 24) return `há ${diffH}h`;
+  const diffD = Math.round(diffH / 24);
+  if (diffD === 1) return 'há 1 dia';
+  if (diffD < 7) return `há ${diffD} dias`;
+  return fmtDateTime(iso);
+}
 
 // Shimmering row placeholders shown in place of plain "A carregar…" text
 // while a list is still fetching (see app.css's .skeleton / .skeleton-row).
@@ -3046,9 +3064,10 @@ function renderAdminPanel() {
     <div class="admin-section-title">Sincronização de preços</div>
     <div class="admin-card">
       <p style="font-size:13px;color:var(--t2);margin:0 0 var(--sp-3)">
-        Atualiza os preços do catálogo a partir da lista de preços no Google Drive.
+        Atualiza os preços do catálogo a partir da lista de preços no Google Drive. Corre automaticamente todos os dias às 6h.
       </p>
-      <button class="btn-ghost" id="admin-sync-btn" style="width:100%">Sincronizar agora</button>
+      <div id="price-sync-status" class="price-sync-status">${skeletonRows(1)}</div>
+      <button class="btn-ghost" id="admin-sync-btn" style="width:100%;margin-top:var(--sp-3)">Sincronizar agora</button>
     </div>
   `;
 
@@ -3087,9 +3106,12 @@ function renderAdminPanel() {
     try {
       const res = await fetch('/api/sync-prices', { method: 'POST' });
       const data = await res.json();
+      if (data.summary) {
+        const runAt = new Date().toISOString();
+        renderPriceSyncStatus({ summary: data.summary, runAt });
+        showPriceSyncSummaryOverlay(data.summary, runAt);
+      }
       if (!res.ok) throw new Error(data.error || 'sync failed');
-      const changed = data.summary?.changed ?? 0;
-      toast(`Sincronização concluída (${changed} preço${changed !== 1 ? 's' : ''} atualizado${changed !== 1 ? 's' : ''})`, 'success');
     } catch (err) {
       showError(err, 'Não foi possível sincronizar os preços.');
     } finally {
@@ -3099,6 +3121,90 @@ function renderAdminPanel() {
 
   loadAdminUsers();
   loadAdminMaterials();
+  loadPriceSyncStatus();
+}
+
+// ═══════════════════════════════════════════════════════════
+// PRICE SYNC STATUS (Admin)
+// ═══════════════════════════════════════════════════════════
+async function loadPriceSyncStatus() {
+  const card = $('#price-sync-status');
+  if (!card) return;
+  try {
+    const res = await fetch('/api/sync-prices?status=1');
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'status fetch failed');
+    renderPriceSyncStatus(data.status || null);
+  } catch (err) {
+    console.error('Failed to load price sync status', err);
+    card.innerHTML = `<div class="price-sync-status__row price-sync-status__row--plain">Não foi possível obter o estado da sincronização.</div>`;
+  }
+}
+
+function priceSyncProblemCount(summary) {
+  if (!summary) return 0;
+  return (summary.unmatchedInPriceList?.length || 0)
+    + (summary.notFoundInSheet?.length || 0)
+    + (summary.duplicatesInPriceList?.length || 0)
+    + (summary.errors?.length || 0);
+}
+
+function renderPriceSyncStatus(status) {
+  const card = $('#price-sync-status');
+  if (!card) return;
+  if (!status || !status.summary) {
+    card.innerHTML = `<div class="price-sync-status__row price-sync-status__row--plain">Ainda sem sincronizações registadas.</div>`;
+    return;
+  }
+  const { summary, runAt } = status;
+  const problems = priceSyncProblemCount(summary);
+  const healthy = summary.ok !== false && problems === 0;
+  card.innerHTML = `
+    <button type="button" class="price-sync-status__row price-sync-status__row--${healthy ? 'ok' : 'warn'}" id="price-sync-status-btn">
+      <div class="price-sync-status__text">
+        <div class="price-sync-status__headline">${healthy ? '✓' : '⚠'} Última sincronização ${fmtRelativeTime(runAt)}</div>
+        <div class="price-sync-status__detail">${summary.changed ?? 0} atualizado${summary.changed !== 1 ? 's' : ''} · ${summary.matched ?? 0} correspondido${summary.matched !== 1 ? 's' : ''}${problems > 0 ? ` · ${problems} a rever` : ''}</div>
+      </div>
+      <span class="price-sync-status__chevron">›</span>
+    </button>`;
+  card.querySelector('#price-sync-status-btn').addEventListener('click', () => showPriceSyncSummaryOverlay(summary, runAt));
+}
+
+function showPriceSyncSummaryOverlay(summary, runAt) {
+  const overlay = document.createElement('div');
+  overlay.className = 'item-search-overlay';
+  const unmatched   = summary.unmatchedInPriceList || [];
+  const notFound    = summary.notFoundInSheet || [];
+  const duplicates  = summary.duplicatesInPriceList || [];
+  const errors      = summary.errors || [];
+  const problems    = priceSyncProblemCount(summary);
+  const section = (title, hint, rows) => rows.length === 0 ? '' : `
+    <div class="sync-summary__section">
+      <div class="sync-summary__section-title">${title} (${rows.length})</div>
+      ${hint ? `<div class="sync-summary__section-hint">${hint}</div>` : ''}
+      <ul class="sync-summary__list">${rows.join('')}</ul>
+    </div>`;
+  const body = `
+    <div class="sync-summary__stats">
+      <div class="sync-summary__stat"><div class="sync-summary__stat-value">${summary.changed ?? 0}</div><div class="sync-summary__stat-label">Atualizados</div></div>
+      <div class="sync-summary__stat"><div class="sync-summary__stat-value">${summary.unchanged ?? 0}</div><div class="sync-summary__stat-label">Sem alteração</div></div>
+      <div class="sync-summary__stat"><div class="sync-summary__stat-value">${summary.matched ?? 0}</div><div class="sync-summary__stat-label">Correspondidos</div></div>
+    </div>
+    ${problems === 0 ? `<div class="sync-summary__all-clear">✓ Sem problemas a rever</div>` : ''}
+    ${section('Erros', 'Falharam durante a sincronização.', errors.map(e => `<li>${dpEsc(e)}</li>`))}
+    ${section('SKUs não encontrados no catálogo', 'Estão na lista de preços mas não existem na folha de artigos.', notFound.map(sku => `<li>${dpEsc(sku)}</li>`))}
+    ${section('Sem SKU na lista de preços', 'Têm preço na tabela mas nenhum SKU válido — não foram sincronizados.', unmatched.map(u => `<li>Linha ${u.row}${u.descricao ? ' · ' + dpEsc(u.descricao) : ''} · ${fmtCurrency(u.preco)}</li>`))}
+    ${section('SKUs duplicados com preços diferentes', 'A mesma SKU aparece mais que uma vez na tabela com preços que não coincidem — verifique qual é o correto.', duplicates.map(d =>
+      `<li>${dpEsc(d.sku)}: ${d.occurrences.map(o => `linha ${o.row} → ${fmtCurrency(o.preco)}`).join(', ')}</li>`
+    ))}`;
+  overlay.innerHTML = `
+    <div class="item-search-overlay__header">
+      <span style="font-weight:700;font-size:16px;flex:1">Sincronização de preços${runAt ? ` · ${fmtDateTime(runAt)}` : ''}</span>
+      <button class="item-search-overlay__cancel" id="sync-summary-close">Fechar</button>
+    </div>
+    <div class="item-search-overlay__results">${body}</div>`;
+  $('#app').appendChild(overlay);
+  overlay.querySelector('#sync-summary-close').addEventListener('click', () => overlay.remove());
 }
 
 async function loadAdminUsers() {
