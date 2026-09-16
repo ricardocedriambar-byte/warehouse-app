@@ -56,11 +56,9 @@ function loadSavedAuth() {
 
 function updateTopbarUser() {
   const btn    = $('#user-btn');
-  const nameEl = $('#user-btn-name');
   const avatar = $('#user-btn-avatar');
   if (!btn) return;
   if (auth.user) {
-    if (nameEl) nameEl.textContent = auth.user.name;
     if (avatar) {
       avatar.textContent = auth.user.name.charAt(0).toUpperCase();
       avatar.style.background = auth.user.avatarColor || '';
@@ -3453,15 +3451,12 @@ function init() {
     renderItemDetail(item);
   });
 
-  // Refresh — reloads both items and orders regardless of which screen is
-  // open. loadAllItems/loadOrders each re-render whatever screen depends
-  // on their data (see refreshVisibleItemViews/refreshVisibleOrderViews),
-  // so this single button fixes stale values everywhere instead of only
-  // on the inventory list.
-  $('#refresh-btn')?.addEventListener('click', async () => {
-    $('#refresh-btn').classList.add('spinning');
-    await Promise.all([loadAllItems(), loadOrders()]);
-    setTimeout(() => $('#refresh-btn').classList.remove('spinning'), 400);
+  // Light/dark toggle — flips between the default dark theme and the
+  // "Ficha de Armazém" paper theme (Definições → Tema has the same two
+  // options; both read/write the same localStorage key via
+  // window.setCedriambarTheme, so they always agree with each other).
+  $('#theme-toggle-btn')?.addEventListener('click', () => {
+    window.setCedriambarTheme?.(currentCedriambarTheme() === 'paper' ? 'dark' : 'paper');
   });
 
   // Pull-to-refresh prevention — only kicks in when the thing actually

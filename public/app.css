@@ -244,28 +244,21 @@ input[type=number] { -moz-appearance: textfield; }
 .topbar__user {
   display: flex;
   align-items: center;
-  gap: var(--sp-2);
-  background: var(--s3);
-  border: 1px solid var(--b1);
-  border-radius: var(--r-full);
-  padding: 5px 12px 5px 6px;
-  color: var(--t1);
-  font-size: 12px;
-  font-weight: 500;
-  white-space: nowrap;
-  max-width: 110px;
-  transition: background var(--tx);
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: 50%;
+  transition: transform var(--tx-fast);
 }
-.topbar__user:active { background: var(--s4); }
+.topbar__user:active { transform: scale(0.93); }
 .topbar__user-avatar {
-  width: 20px; height: 20px;
+  width: 34px; height: 34px;
   border-radius: 50%;
   background: var(--green-700);
   display: flex; align-items: center; justify-content: center;
-  font-size: 10px; font-weight: 700; color: var(--green-300);
-  flex: 0 0 20px;
+  font-size: 14px; font-weight: 600; color: var(--green-300);
+  flex: 0 0 34px;
 }
-.topbar__user svg { opacity: 0.5; flex: 0 0 auto; }
 
 .topbar__user-wrap { position: relative; }
 
@@ -299,8 +292,14 @@ input[type=number] { -moz-appearance: textfield; }
 .user-menu__item--danger svg { opacity: 0.8; }
 .user-menu__sep { height: 1px; background: var(--b1); margin: var(--sp-1) var(--sp-2); }
 
-.topbar__refresh {
+/* Quick light/dark toggle — switches between the default dark theme and
+   the "Ficha de Armazém" paper theme without going into Definições. Both
+   icons live in the DOM; only the one matching the CURRENT theme is shown
+   (moon = dark active, sun = paper/light active), same idea as the sun/moon
+   toggles in most apps' system trays. */
+.topbar__theme-toggle {
   width: 34px; height: 34px;
+  flex: 0 0 34px;
   background: none;
   border: none;
   color: var(--t3);
@@ -308,9 +307,11 @@ input[type=number] { -moz-appearance: textfield; }
   border-radius: var(--r-sm);
   transition: color var(--tx), background var(--tx);
 }
-.topbar__refresh:active { background: var(--s3); color: var(--t1); }
-.topbar__refresh.spinning svg { animation: spin 0.7s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
+.topbar__theme-toggle:active { background: var(--s3); color: var(--t1); }
+.topbar__theme-toggle-icon--sun { display: none; }
+.topbar__theme-toggle-icon--moon { display: block; }
+:root[data-theme="paper"] .topbar__theme-toggle-icon--sun { display: block; }
+:root[data-theme="paper"] .topbar__theme-toggle-icon--moon { display: none; }
 
 /* ── Views ─────────────────────────────────────────────────── */
 .views { flex: 1; overflow: hidden; position: relative; }
@@ -1346,7 +1347,6 @@ select.order-field { padding: 12px var(--sp-4); }
 .order-line-card__total { display: none; }
 
 @media (prefers-reduced-motion: reduce) {
-  .topbar__refresh.spinning svg { animation: none; }
   .toast { transition: none; }
   .pick-line { transition: none; }
   .pick-line--confirmed { animation: none; }
