@@ -12,7 +12,11 @@
 // doesn't attempt to enforce who's "really" an admin, it just exposes the
 // data operations the UI needs.
 
-const { getAllUsers, findUserById, createUser, updateUser, VALID_ROLES } = require('../lib/users');
+const { getAllUsers, findUserById, createUser, updateUser, VALID_ROLES, AVATAR_PHOTO_MAX_CHARS } = require('../lib/users');
+
+function avatarPhotoTooLarge(body) {
+  return typeof body.avatarPhoto === 'string' && body.avatarPhoto.length > AVATAR_PHOTO_MAX_CHARS;
+}
 
 function toLoginShape(u) {
   return {
@@ -20,7 +24,8 @@ function toLoginShape(u) {
     name: u.name,
     role: u.role,
     defaultTab: u.defaultTab || '',
-    avatarColor: u.avatarColor || ''
+    avatarColor: u.avatarColor || '',
+    avatarPhoto: u.avatarPhoto || ''
   };
 }
 
@@ -43,6 +48,10 @@ module.exports = async (req, res) => {
         res.status(400).json({ error: `Role inválida: ${body.role}` });
         return;
       }
+      if (avatarPhotoTooLarge(body)) {
+        res.status(400).json({ error: 'Foto de perfil demasiado grande' });
+        return;
+      }
       const user = await createUser({
         name,
         role: body.role,
@@ -50,7 +59,8 @@ module.exports = async (req, res) => {
         notifyOrders: !!body.notifyOrders,
         notifyLowStock: !!body.notifyLowStock,
         defaultTab: body.defaultTab,
-        avatarColor: body.avatarColor
+        avatarColor: body.avatarColor,
+        avatarPhoto: body.avatarPhoto
       });
       res.status(201).json({ user });
       return;
@@ -65,11 +75,15 @@ module.exports = async (req, res) => {
       if (!existing) { res.status(404).json({ error: 'Utilizador não encontrado' }); return; }
 
       const fields = {};
-      for (const key of ['role', 'ativo', 'email', 'notifyOrders', 'notifyLowStock', 'defaultTab', 'avatarColor']) {
+      for (const key of ['role', 'ativo', 'email', 'notifyOrders', 'notifyLowStock', 'defaultTab', 'avatarColor', 'avatarPhoto']) {
         if (Object.prototype.hasOwnProperty.call(body, key)) fields[key] = body[key];
       }
       if (fields.role !== undefined && !VALID_ROLES.includes(fields.role)) {
         res.status(400).json({ error: `Role inválida: ${fields.role}` });
+        return;
+      }
+      if (avatarPhotoTooLarge(fields)) {
+        res.status(400).json({ error: 'Foto de perfil demasiado grande' });
         return;
       }
 

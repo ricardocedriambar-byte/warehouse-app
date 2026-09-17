@@ -21,6 +21,97 @@ function roleLabel(role) { return ROLE_LABELS[role] || role; }
 // so the defaults stay familiar.
 const AVATAR_COLORS = ['#2e9e68', '#c07e38', '#4a9e6a', '#5b8dee', '#c05a4a', '#9d6228', '#8a63d2', '#3fa7c4'];
 
+// ═══════════════════════════════════════════════════════════
+// AVATAR PHOTO (Settings → foto de perfil)
+// ═══════════════════════════════════════════════════════════
+// Uploaded photos are stored inline as a data: URI on the user's own row in
+// the Utilizadores Sheet (see lib/users.js's FotoAvatar column) — the same
+// place avatarColor already lives — rather than through a separate
+// file-storage integration, since the service account only has read-only
+// Drive access. That means every photo has to fit comfortably inside a
+// single Sheets cell (50,000-char hard limit), so uploads are resized to a
+// small square and re-encoded as JPEG, shrinking quality until well under
+// that (lib/users.js/api/users.js enforce the same cap server-side too).
+const AVATAR_PHOTO_DIM = 160;
+const AVATAR_PHOTO_MAX_CHARS = 40000;
+
+async function compressAvatarPhoto(file) {
+  const size = AVATAR_PHOTO_DIM;
+
+  // createImageBitmap with imageOrientation:'from-image' bakes in the
+  // photo's EXIF rotation — phone camera shots are very often stored
+  // "sideways" with just an orientation flag, and a plain Image()+canvas
+  // draw ignores that flag, which would silently save a rotated avatar.
+  // Not every browser supports the option, so fall back to a plain <img>
+  // load (fine on desktop, where EXIF rotation essentially never happens).
+  let source = null;
+  if (window.createImageBitmap) {
+    try { source = await createImageBitmap(file, { imageOrientation: 'from-image' }); }
+    catch { source = null; }
+  }
+  if (!source) {
+    source = await new Promise((resolve, reject) => {
+      const img = new Image();
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error('Não foi possível ler o ficheiro'));
+      reader.onload = () => {
+        img.onerror = () => reject(new Error('Ficheiro de imagem inválido'));
+        img.onload = () => resolve(img);
+        img.src = reader.result;
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  const canvas = document.createElement('canvas');
+  canvas.width = size; canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  // Cover-crop: scale so the shorter side fills the square, then center-crop.
+  const scale = Math.max(size / source.width, size / source.height);
+  const w = source.width * scale, h = source.height * scale;
+  ctx.drawImage(source, (size - w) / 2, (size - h) / 2, w, h);
+  if (source.close) source.close(); // release the ImageBitmap's decoded memory
+
+  let quality = 0.85;
+  let dataUrl = canvas.toDataURL('image/jpeg', quality);
+  while (dataUrl.length > AVATAR_PHOTO_MAX_CHARS && quality > 0.35) {
+    quality -= 0.1;
+    dataUrl = canvas.toDataURL('image/jpeg', quality);
+  }
+  if (dataUrl.length > AVATAR_PHOTO_MAX_CHARS) {
+    throw new Error('Imagem demasiado grande mesmo após compressão');
+  }
+  return dataUrl;
+}
+
+// Shared helpers so the topbar, login picker, Settings preview, and Admin
+// user list all render a profile photo (when set) the same way, falling
+// back to the existing initial-letter-on-colored-circle look otherwise.
+function avatarStyleAttr(u) {
+  if (u.avatarPhoto) return `background-image:url('${u.avatarPhoto}');background-size:cover;background-position:center;`;
+  return u.avatarColor ? `background:${u.avatarColor}` : '';
+}
+function avatarInitial(u) {
+  return u.avatarPhoto ? '' : (u.name || '').charAt(0).toUpperCase();
+}
+function applyAvatarVisual(el, u) {
+  if (!el) return;
+  if (u.avatarPhoto) {
+    // `background` is a shorthand — setting it clears the longhands it
+    // covers (including backgroundImage), so it has to be cleared BEFORE
+    // backgroundImage is set here, not after, or the image never shows.
+    el.style.background = '';
+    el.style.backgroundImage = `url('${u.avatarPhoto}')`;
+    el.style.backgroundSize = 'cover';
+    el.style.backgroundPosition = 'center';
+    el.textContent = '';
+  } else {
+    el.style.backgroundImage = '';
+    el.style.background = u.avatarColor || '';
+    el.textContent = (u.name || '').charAt(0).toUpperCase();
+  }
+}
+
 // Themes offered in Definições → Tema. Applied instantly (no "Guardar"
 // needed) via window.setCedriambarTheme, defined in index.html's <head> so
 // the choice also survives to the next app launch with no flash of the
@@ -59,10 +150,7 @@ function updateTopbarUser() {
   const avatar = $('#user-btn-avatar');
   if (!btn) return;
   if (auth.user) {
-    if (avatar) {
-      avatar.textContent = auth.user.name.charAt(0).toUpperCase();
-      avatar.style.background = auth.user.avatarColor || '';
-    }
+    applyAvatarVisual(avatar, auth.user);
     btn.style.display = 'flex';
   } else {
     btn.style.display = 'none';
@@ -96,7 +184,7 @@ async function showLoginScreen() {
 
     list.innerHTML = users.map(u => `
       <button class="login-user-btn" data-id="${u.id}" data-name="${u.name}" data-role="${u.role}" data-default-tab="${u.defaultTab || ''}" data-avatar-color="${u.avatarColor || ''}">
-        <div class="login-user-btn__avatar" style="${u.avatarColor ? `background:${u.avatarColor}` : ''}">${u.name.charAt(0).toUpperCase()}</div>
+        <div class="login-user-btn__avatar" style="${avatarStyleAttr(u)}">${avatarInitial(u)}</div>
         <div class="login-user-btn__info">
           <span class="login-user-btn__name">${u.name}</span>
           <span class="login-user-btn__role">${roleLabel(u.role)}</span>
@@ -104,11 +192,16 @@ async function showLoginScreen() {
       </button>
     `).join('');
 
+    // avatarPhoto isn't stuffed into a data-* attribute like the other
+    // fields (it can be tens of KB of base64) — looked up from the still
+    // in-scope `users` array instead when a row is tapped.
     list.querySelectorAll('.login-user-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
+        const full = users.find(x => x.id === btn.dataset.id);
         const user = {
           id: btn.dataset.id, name: btn.dataset.name, role: btn.dataset.role,
-          defaultTab: btn.dataset.defaultTab || '', avatarColor: btn.dataset.avatarColor || ''
+          defaultTab: btn.dataset.defaultTab || '', avatarColor: btn.dataset.avatarColor || '',
+          avatarPhoto: full?.avatarPhoto || ''
         };
         saveAuth(user);
         overlay.style.display = 'none';
@@ -2852,10 +2945,17 @@ function renderSettingsForm(panel, u) {
 
     <div class="settings-card">
       <div class="settings-profile">
-        <div class="settings-profile__avatar" id="settings-avatar-preview" style="${u.avatarColor ? `background:${u.avatarColor}` : ''}">${u.name.charAt(0).toUpperCase()}</div>
+        <div class="settings-profile__avatar-wrap">
+          <div class="settings-profile__avatar" id="settings-avatar-preview" style="${avatarStyleAttr(u)}">${avatarInitial(u)}</div>
+          <button type="button" class="settings-profile__avatar-edit" id="settings-avatar-edit-btn" aria-label="Mudar foto de perfil">
+            <svg viewBox="0 0 24 24" width="12" height="12"><path d="M4 7h3l2-2h6l2 2h3v13H4V7z" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linejoin="round"/><circle cx="12" cy="13.5" r="3.2" stroke="currentColor" stroke-width="1.8" fill="none"/></svg>
+          </button>
+          <input type="file" accept="image/*" id="settings-avatar-input" style="display:none" />
+        </div>
         <div>
           <div class="settings-profile__name">${u.name}</div>
           <div class="settings-profile__role">${roleLabel(u.role)}</div>
+          <button type="button" class="settings-profile__remove-photo" id="settings-avatar-remove-btn" style="display:${u.avatarPhoto ? '' : 'none'}">Remover foto</button>
         </div>
       </div>
       <input class="order-field" id="settings-email" type="email" placeholder="email para notificações" value="${u.email || ''}" style="margin-bottom:0" />
@@ -2923,13 +3023,44 @@ function renderSettingsForm(panel, u) {
   panel.querySelector('#settings-back-btn').addEventListener('click', () => history.back());
 
   let selectedColor = u.avatarColor || '';
+  let selectedPhoto = u.avatarPhoto || '';
+  const avatarPreview = panel.querySelector('#settings-avatar-preview');
+  const removePhotoBtn = panel.querySelector('#settings-avatar-remove-btn');
+  function refreshAvatarPreview() {
+    applyAvatarVisual(avatarPreview, { name: u.name, avatarColor: selectedColor, avatarPhoto: selectedPhoto });
+    if (removePhotoBtn) removePhotoBtn.style.display = selectedPhoto ? '' : 'none';
+  }
+
   panel.querySelectorAll('.avatar-color-swatch').forEach(sw => {
     sw.addEventListener('click', () => {
       selectedColor = sw.dataset.color;
       panel.querySelectorAll('.avatar-color-swatch').forEach(s => s.dataset.selected = String(s === sw));
-      const preview = $('#settings-avatar-preview');
-      if (preview) preview.style.background = selectedColor;
+      refreshAvatarPreview();
     });
+  });
+
+  panel.querySelector('#settings-avatar-edit-btn')?.addEventListener('click', () => {
+    panel.querySelector('#settings-avatar-input')?.click();
+  });
+  panel.querySelector('#settings-avatar-input')?.addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    e.target.value = ''; // allow re-selecting the same file later
+    if (!file) return;
+    if (!file.type.startsWith('image/')) { toast('Escolhe um ficheiro de imagem', 'error'); return; }
+    const editBtn = panel.querySelector('#settings-avatar-edit-btn');
+    editBtn.disabled = true;
+    try {
+      selectedPhoto = await compressAvatarPhoto(file);
+      refreshAvatarPreview();
+    } catch (err) {
+      showError(err, 'Não foi possível processar essa imagem.');
+    } finally {
+      editBtn.disabled = false;
+    }
+  });
+  removePhotoBtn?.addEventListener('click', () => {
+    selectedPhoto = '';
+    refreshAvatarPreview();
   });
 
   // Theme applies immediately on tap — it's a device display preference
@@ -2950,7 +3081,8 @@ function renderSettingsForm(panel, u) {
       notifyOrders: $('#settings-notify-orders').checked,
       notifyLowStock: $('#settings-notify-lowstock').checked,
       defaultTab: $('#settings-default-tab').value,
-      avatarColor: selectedColor
+      avatarColor: selectedColor,
+      avatarPhoto: selectedPhoto
     };
     try {
       const res = await fetch('/api/users', {
@@ -3221,7 +3353,7 @@ async function loadAdminUsers() {
     card.innerHTML = users.map(u => `
       <div class="admin-user-row" data-id="${u.id}">
         <div class="admin-user-row__top">
-          <div class="admin-user-row__avatar" style="${u.avatarColor ? `background:${u.avatarColor}` : ''}">${u.name.charAt(0).toUpperCase()}</div>
+          <div class="admin-user-row__avatar" style="${avatarStyleAttr(u)}">${avatarInitial(u)}</div>
           <div style="flex:1">
             <div class="admin-user-row__name">${u.name}</div>
             <div class="admin-user-row__meta">${u.email || 'sem email'}</div>
