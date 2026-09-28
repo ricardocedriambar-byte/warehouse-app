@@ -1568,12 +1568,30 @@ select.order-field { padding: 12px var(--sp-4); }
   font-size: 15px; flex: 0 0 auto; cursor: pointer;
 }
 .send-preview-overlay__close:active { background: var(--s4); }
-.send-preview-overlay__scroll {
-  flex: 1; overflow-y: auto; overscroll-behavior: contain;
-  display: flex; justify-content: center;
-  background: #525659; padding: var(--sp-4) var(--sp-3);
+/* Pinch-zoomable preview — reuses the Recursos PDF viewer's engine
+   (createPdfCanvasViewer + attachPdfPinchZoom in resources.js). The
+   scroll box pans natively in both directions once zoomed; touch-action
+   leaves two-finger gestures to our pointer handlers instead of the
+   (disabled) page zoom. No flex-centering here: it breaks scrollLeft
+   math when the page is wider than the box. */
+.send-preview-overlay__viewport {
+  flex: 1; min-height: 0; position: relative; display: flex; flex-direction: column;
 }
+.send-preview-overlay__scroll {
+  flex: 1; overflow: auto; overscroll-behavior: contain;
+  touch-action: pan-x pan-y; -webkit-overflow-scrolling: touch;
+  background: #525659;
+}
+.send-preview-overlay__pages {
+  min-height: 100%;
+  padding: var(--sp-3) 0 72px; /* room so the zoom bar never covers the page's bottom */
+  transform-origin: 0 0;
+}
+.send-preview-overlay__pages .resources-viewer__page { box-shadow: 0 2px 12px rgba(0,0,0,0.4); background: #fff; }
+.send-preview-overlay__zoom { bottom: var(--sp-3); }
+.send-preview-overlay__zoom[hidden] { display: none; }
 .send-preview-overlay__canvas {
+  display: block; margin: 0 auto;
   max-width: 100%; height: auto; box-shadow: 0 2px 12px rgba(0,0,0,0.4);
   background: #fff;
 }

@@ -1617,7 +1617,14 @@ function renderOrderCreate(existingOrder = null) {
         // it's already stored in the pricing unit, and the order line
         // itself doesn't carry dimensaoM2 to safely convert back.
         const catalogItem = state.items.find(i => i.sku === l.sku);
-        return { ...l, qtyMode: l.unidade || 'un', dimensaoM2: catalogItem ? catalogItem.dimensaoM2 : null };
+        const dimensaoM2 = catalogItem ? catalogItem.dimensaoM2 : null;
+        // Lines saved with qtyMode/qtyEntered (entered as e.g. "5 un" of a
+        // m²-priced panel) reopen exactly as they were typed, as long as
+        // the catalog still knows the per-unit area to convert with.
+        if (l.qtyMode && l.qtyMode !== (l.unidade || 'un') && l.qtyEntered > 0 && dimensaoM2) {
+          return { ...l, qtyMode: l.qtyMode, qtyOrdered: l.qtyEntered, dimensaoM2 };
+        }
+        return { ...l, qtyMode: l.unidade || 'un', dimensaoM2 };
       })
     : (restoredDraft ? restoredDraft.lines : []);
   orderState.newOrderClient = isEditing
@@ -1822,6 +1829,20 @@ function baseQty(line) {
   return line.qtyOrdered || 0;
 }
 
+// Converts an in-progress order line into what gets saved/sent:
+// qtyOrdered is always stored in the pricing unit (m² for panels) since
+// stock, reservations and totals run on it — but qtyMode/qtyEntered keep
+// exactly what the vendedor typed ("5 un"), so the Nota de Encomenda PDF
+// and a later edit can show the quantity the way it was actually chosen.
+function toOrderLine(line) {
+  return {
+    ...line,
+    qtyMode: line.qtyMode || 'un',
+    qtyEntered: line.qtyOrdered || 0,
+    qtyOrdered: baseQty(line)
+  };
+}
+
 // STOCK/RESERVADO/DISPONÍVEL are always counted in physical pieces ("un"),
 // same convention as lib/orders.js's toPieces() and api/pick-line.js's
 // piecesPicked — but an order line's qtyOrdered is in the item's *pricing*
@@ -1898,7 +1919,9 @@ function renderOrderLines() {
       : hasConversion && qtyMode === nativeUnit
       ? `→ ${fmtNumber((line.qtyOrdered||0) / line.dimensaoM2, 2)} un`
       : '';
-    const lineTotal = (line.qtyOrdered || 0) * (line.unitPrice || 0) * (1 - discountPct / 100);
+    // baseQty: price is per pricing unit (m²), so "5 un" must be converted
+    // before multiplying — otherwise the card showed 5 × 10 € instead of 28,98 m² × 10 €.
+    const lineTotal = baseQty(line) * (line.unitPrice || 0) * (1 - discountPct / 100);
 
     return `
       <div class="order-line-card" data-idx="${idx}">
@@ -2000,7 +2023,7 @@ function renderOrderLines() {
 
       const totalEl = list.querySelector(`#line-total-${idx}`);
       if (totalEl) {
-        const total = (line.qtyOrdered||0) * (line.unitPrice||0) * (1 - (line.discountPct||0)/100);
+        const total = baseQty(line) * (line.unitPrice||0) * (1 - (line.discountPct||0)/100);
         totalEl.textContent = `${fmtNumber(total, 2)} €`;
       }
 
@@ -2321,7 +2344,7 @@ function buildOrderSubmissionPayload(targetStatus) {
     }
     const { lines: doorLines, doorsData } = getDoorsOrderPayload();
     if (doorLines.length === 0) { toast('Preencha as medidas para gerar os materiais', 'error'); return null; }
-    const extraLines = orderState.newOrderLines.map(line => ({ ...line, qtyOrdered: baseQty(line) }));
+    const extraLines = orderState.newOrderLines.map(line => toOrderLine(line));
     return {
       clientId: client.id, clientName: client.name, salesperson, orderNotes,
       status: targetStatus, orderType: 'Portas', doorsData,
@@ -2332,7 +2355,7 @@ function buildOrderSubmissionPayload(targetStatus) {
   return {
     clientId: client.id, clientName: client.name, salesperson, orderNotes,
     status: targetStatus, orderType: 'Normal',
-    lines: orderState.newOrderLines.map(line => ({ ...line, qtyOrdered: baseQty(line) }))
+    lines: orderState.newOrderLines.map(line => toOrderLine(line))
   };
 }
 
@@ -2357,7 +2380,7 @@ function buildOrderEditPayload() {
     }
     const { lines: doorLines, doorsData } = getDoorsOrderPayload();
     if (doorLines.length === 0) { toast('Preencha as medidas para gerar os materiais', 'error'); return null; }
-    const extraLines = orderState.newOrderLines.map(line => ({ ...line, qtyOrdered: baseQty(line) }));
+    const extraLines = orderState.newOrderLines.map(line => toOrderLine(line));
     return {
       orderId: editing.orderId, orderNotes, orderType: 'Portas', doorsData,
       lines: [...doorLines, ...extraLines], editedBy: auth.user?.name || ''
@@ -2366,7 +2389,7 @@ function buildOrderEditPayload() {
   if (orderState.newOrderLines.length === 0) { toast('Adicione pelo menos um artigo', 'error'); return null; }
   return {
     orderId: editing.orderId, orderNotes, orderType: 'Normal',
-    lines: orderState.newOrderLines.map(line => ({ ...line, qtyOrdered: baseQty(line) })),
+    lines: orderState.newOrderLines.map(line => toOrderLine(line)),
     editedBy: auth.user?.name || ''
   };
 }
@@ -2580,8 +2603,15 @@ function showSendPreviewOverlay(pdfBytes, onConfirm, shortages = [], labels = {}
       <button class="send-preview-overlay__close" id="send-preview-close" aria-label="Fechar">✕</button>
     </div>
     ${shortageBanner}
-    <div class="send-preview-overlay__scroll" id="send-preview-scroll">
-      <canvas class="send-preview-overlay__canvas" id="send-preview-canvas"></canvas>
+    <div class="send-preview-overlay__viewport">
+      <div class="send-preview-overlay__scroll" id="send-preview-scroll">
+        <div class="send-preview-overlay__pages" id="send-preview-pages"></div>
+      </div>
+      <div class="resources-viewer__zoom-controls send-preview-overlay__zoom" hidden>
+        <button class="resources-viewer__zoom-btn" data-zoom="out" aria-label="Reduzir zoom">−</button>
+        <button class="resources-viewer__zoom-btn resources-viewer__zoom-btn--reset" data-zoom="reset">100%</button>
+        <button class="resources-viewer__zoom-btn" data-zoom="in" aria-label="Aumentar zoom">+</button>
+      </div>
     </div>
     <div class="send-preview-overlay__actions">
       <button class="order-action-btn order-action-btn--draft" id="send-preview-back">Voltar a editar</button>
@@ -2589,14 +2619,46 @@ function showSendPreviewOverlay(pdfBytes, onConfirm, shortages = [], labels = {}
     </div>`;
   document.body.appendChild(overlay);
 
-  const canvas = overlay.querySelector('#send-preview-canvas');
-  renderPdfIntoCanvas(canvas, pdfBytes).catch(err => {
+  // Same zoomable viewer as the Recursos tab (resources.js): pinch with
+  // two fingers, double-tap to toggle zoom, or the −/100%/+ buttons, and
+  // pan by scrolling natively once zoomed in. Re-renders at the final
+  // zoom level so small print stays crisp instead of a blurry upscale.
+  const scrollEl = overlay.querySelector('#send-preview-scroll');
+  const pagesEl  = overlay.querySelector('#send-preview-pages');
+  const zoomBar  = overlay.querySelector('.send-preview-overlay__zoom');
+  let pdfViewer = null;
+  const showPreviewFailure = err => {
     console.error(err);
-    overlay.querySelector('#send-preview-scroll').innerHTML =
+    scrollEl.innerHTML =
       '<p class="send-preview-overlay__fallback">Não foi possível mostrar a pré-visualização, mas podes continuar a enviar normalmente.</p>';
-  });
+  };
+  if (typeof createPdfCanvasViewer === 'function' && typeof attachPdfPinchZoom === 'function') {
+    // pdf.js takes ownership of (detaches) the buffer it's given — hand it
+    // a copy so the caller's bytes stay usable.
+    const data = new Uint8Array(pdfBytes.slice(0));
+    createPdfCanvasViewer(scrollEl, pagesEl, { data }).then(viewer => {
+      if (!overlay.isConnected) { viewer.destroy(); return; }
+      pdfViewer = viewer;
+      const zoomLabel = zoomBar.querySelector('.resources-viewer__zoom-btn--reset');
+      zoomBar.querySelectorAll('.resources-viewer__zoom-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          if (btn.dataset.zoom === 'in') viewer.zoomIn();
+          else if (btn.dataset.zoom === 'out') viewer.zoomOut();
+          else viewer.reset();
+        });
+      });
+      viewer.onChange(pct => { zoomLabel.textContent = `${pct}%`; });
+      zoomBar.hidden = false;
+      attachPdfPinchZoom(scrollEl, pagesEl, viewer);
+    }).catch(showPreviewFailure);
+  } else {
+    const canvas = document.createElement('canvas');
+    canvas.className = 'send-preview-overlay__canvas';
+    pagesEl.appendChild(canvas);
+    renderPdfIntoCanvas(canvas, pdfBytes).catch(showPreviewFailure);
+  }
 
-  const cleanup = () => overlay.remove();
+  const cleanup = () => { if (pdfViewer) pdfViewer.destroy(); overlay.remove(); };
   overlay.querySelector('#send-preview-close').addEventListener('click', cleanup);
   overlay.querySelector('#send-preview-back').addEventListener('click', cleanup);
   overlay.querySelector('#send-preview-confirm').addEventListener('click', async () => {

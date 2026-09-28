@@ -30,13 +30,24 @@
 // Needs VAPID_PUBLIC_KEY/VAPID_PRIVATE_KEY set — see lib/push.js.
 // ───────────────────────────────────────────────────────────────────────
 
-const { buildOrderNotePdf } = require('../lib/pdf-order-note');
+const { buildOrderNotePdf, qtyDisplay } = require('../lib/pdf-order-note');
 const { getNotifyRecipients, getNotifyRecipientUserIds } = require('../lib/users');
 const { sendPushToUsers } = require('../lib/push');
 
 function fmtNum(n, decimals = 2) {
   if (n === null || n === undefined || Number.isNaN(n)) return '—';
   return Number(n).toLocaleString('pt-PT', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+}
+
+// Same rule as the PDF (lib/pdf-order-note.js qtyDisplay): show the qty
+// the way it was entered in the app ("5 un"), with the pricing-unit
+// equivalent ("28,980 m²") underneath when they differ.
+function emailQty(l) {
+  const q = qtyDisplay(l);
+  const pretty = t => String(t).replace(/ m2$/, ' m²').replace(/ m3$/, ' m³');
+  return q.secondary
+    ? `${pretty(q.primary)}<br><span style="color:#666;font-size:11px;">${pretty(q.secondary)}</span>`
+    : pretty(q.primary);
 }
 
 function buildEmailHTML(order, client) {
@@ -49,7 +60,7 @@ function buildEmailHTML(order, client) {
     <tr>
       <td style="padding:6px 8px;border-bottom:1px solid #e5e5e5;">${l.sku || '—'}</td>
       <td style="padding:6px 8px;border-bottom:1px solid #e5e5e5;">${l.descricao || ''}</td>
-      <td style="padding:6px 8px;border-bottom:1px solid #e5e5e5;text-align:center;">${fmtNum(l.qtyOrdered, 0)} ${l.unidade || 'un'}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #e5e5e5;text-align:center;">${emailQty(l)}</td>
       <td style="padding:6px 8px;border-bottom:1px solid #e5e5e5;text-align:right;">${fmtNum(l.unitPrice)}</td>
       <td style="padding:6px 8px;border-bottom:1px solid #e5e5e5;text-align:right;">${l.discountPct ? fmtNum(l.discountPct, 0) + '%' : '—'}</td>
       <td style="padding:6px 8px;border-bottom:1px solid #e5e5e5;text-align:right;">${fmtNum(lineNet(l))}</td>
