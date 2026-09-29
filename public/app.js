@@ -3354,7 +3354,7 @@ function renderPriceSyncStatus(status) {
   card.innerHTML = `
     <button type="button" class="price-sync-status__row price-sync-status__row--${healthy ? 'ok' : 'warn'}" id="price-sync-status-btn">
       <div class="price-sync-status__text">
-        <div class="price-sync-status__headline">${healthy ? '✓' : '⚠'} Última sincronização ${fmtRelativeTime(runAt)}</div>
+        <div class="price-sync-status__headline">${healthy ? '✓' : '⚠'} Última sincronização${summary.source === 'j5f' ? ' (J5F)' : ''} ${fmtRelativeTime(runAt)}</div>
         <div class="price-sync-status__detail">${summary.changed ?? 0} atualizado${summary.changed !== 1 ? 's' : ''} · ${summary.matched ?? 0} correspondido${summary.matched !== 1 ? 's' : ''}${problems > 0 ? ` · ${problems} a rever` : ''}</div>
       </div>
       <span class="price-sync-status__chevron">›</span>

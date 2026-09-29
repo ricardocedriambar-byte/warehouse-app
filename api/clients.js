@@ -2,6 +2,7 @@
 // GET  /api/clients             -> list all clients
 // POST /api/clients             -> create a new client
 // POST /api/clients?import=1    -> one-shot bulk import of the DOS CSV export (body: { csv })
+// POST /api/clients?sync=j5f    -> J5F client sync (see lib/j5f.js)
 //
 // import-clients.js was merged into this file to stay under Vercel's
 // 12-serverless-function limit on the Hobby plan — behavior unchanged,
@@ -9,6 +10,7 @@
 
 const { getAllClients, createClient } = require('../lib/orders');
 const { sheetsFetch } = require('../lib/sheets');
+const { isJ5fAuthorized, syncJ5fClients } = require('../lib/j5f');
 
 const CLIENTS_TAB = 'Clientes';
 const BATCH_SIZE = 500; // Sheets API limit per batchUpdate call
@@ -93,6 +95,13 @@ module.exports = async (req, res) => {
     }
 
     if (req.method === 'POST') {
+      // POST /api/clients?sync=j5f[&dryRun=1] -> read-only J5F sync (tools/j5f-sync)
+      if (req.query && req.query.sync === 'j5f') {
+        if (!isJ5fAuthorized(req)) { res.status(401).json({ error: 'Unauthorized' }); return; }
+        const result = await syncJ5fClients(req.body, { dryRun: req.query.dryRun === '1' });
+        res.status(200).json(result);
+        return;
+      }
       if (req.query && req.query.import !== undefined) {
         await importClients(req, res);
         return;
