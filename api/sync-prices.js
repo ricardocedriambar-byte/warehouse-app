@@ -23,7 +23,7 @@
 
 const { getAllItems, bulkUpdatePrices, appendItemRows, appendLogEntries, parsePtNumber, savePriceSyncStatus, getPriceSyncStatus } = require('../lib/sheets');
 const { getPriceListUpdates } = require('../lib/priceList');
-const { isJ5fAuthorized, parseJ5fProducts, buildNewItemRow } = require('../lib/j5f');
+const { isJ5fAuthorized, parseJ5fProducts, buildNewItemRow, getJ5fIgnoreSet } = require('../lib/j5f');
 
 // Require a shared secret for cron-triggered calls so this endpoint can't
 // be hit by anyone who finds the URL and used to spam writes to the sheet.
@@ -134,6 +134,8 @@ module.exports = async (req, res) => {
   if (isJ5f) { summary.notInApp = 0; summary.added = 0; }
   const newRows = [];      // J5F products not in the app yet -> new Etiquetas rows
   const newPreview = [];
+  const ignoreSkus = isJ5f ? await getJ5fIgnoreSet({ dryRun }) : new Set();
+  if (isJ5f) summary.ignored = 0;
   const conflictingSkus = new Set((priceListResult.duplicates || []).filter((d) => d.conflicting).map((d) => d.sku));
   const syncNote = isJ5f ? 'Sincronização automática J5F' : 'Sincronização automática TABELA';
 
@@ -146,7 +148,9 @@ module.exports = async (req, res) => {
       // padding: "73568" would become a different code from J5F's), and
       // skip codes that appear twice with different prices.
       // (An older PC script that doesn't send familia/unidade never creates items.)
-      if (/^\d{8}$/.test(product.codigo || '') && product.unidade && !conflictingSkus.has(sku)) {
+      if (ignoreSkus.has(sku) || !String(product.descricao || '').trim()) {
+        summary.ignored++;   // on the J5F_Ignorar list, or a blank J5F record
+      } else if (/^\d{8}$/.test(product.codigo || '') && product.unidade && !conflictingSkus.has(sku)) {
         const row = buildNewItemRow(sku, product);
         newRows.push(row);
         summary.added++;
