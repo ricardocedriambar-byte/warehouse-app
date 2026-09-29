@@ -21,9 +21,9 @@
 // Sheet writes. Vercel Cron always calls this endpoint with a plain GET
 // and no query string (see vercel.json), so that path is untouched.
 
-const { getAllItems, bulkUpdatePrices, appendLogEntries, parsePtNumber, savePriceSyncStatus, getPriceSyncStatus } = require('../lib/sheets');
+const { getAllItems, bulkUpdatePrices, appendItemRows, appendLogEntries, parsePtNumber, savePriceSyncStatus, getPriceSyncStatus } = require('../lib/sheets');
 const { getPriceListUpdates } = require('../lib/priceList');
-const { isJ5fAuthorized, parseJ5fProducts } = require('../lib/j5f');
+const { isJ5fAuthorized, parseJ5fProducts, buildNewItemRow } = require('../lib/j5f');
 
 // Require a shared secret for cron-triggered calls so this endpoint can't
 // be hit by anyone who finds the URL and used to spam writes to the sheet.
@@ -131,22 +131,40 @@ module.exports = async (req, res) => {
   const logEntries = [];
   const preview = [];      // dry run: first changes, to eyeball before going live
   const ratios = [];       // new/old price for matched items — ~1.23 would mean an IVA mismatch
-  if (isJ5f) summary.notInApp = 0;
+  if (isJ5f) { summary.notInApp = 0; summary.added = 0; }
+  const newRows = [];      // J5F products not in the app yet -> new Etiquetas rows
+  const newPreview = [];
+  const conflictingSkus = new Set((priceListResult.duplicates || []).filter((d) => d.conflicting).map((d) => d.sku));
   const syncNote = isJ5f ? 'Sincronização automática J5F' : 'Sincronização automática TABELA';
 
-  for (const [sku, { preco: newPreco, valorCompra: newValorCompra }] of prices) {
+  for (const [sku, product] of prices) {
+    const { preco: newPreco, valorCompra: newValorCompra } = product;
     const item = sheetBySku.get(sku);
     if (!item) {
-      // J5F holds thousands of products the app doesn't stock — expected,
-      // so just count them instead of flagging each one for review.
-      if (isJ5f) summary.notInApp++;
-      else summary.notFoundInSheet.push(sku);
+      if (!isJ5f) { summary.notFoundInSheet.push(sku); continue; }
+      // Only add products whose J5F code already IS an 8-digit SKU (no
+      // padding: "73568" would become a different code from J5F's), and
+      // skip codes that appear twice with different prices.
+      // (An older PC script that doesn't send familia/unidade never creates items.)
+      if (/^\d{8}$/.test(product.codigo || '') && product.unidade && !conflictingSkus.has(sku)) {
+        const row = buildNewItemRow(sku, product);
+        newRows.push(row);
+        summary.added++;
+        if (newPreview.length < 50) {
+          newPreview.push({ sku, descricao: row[2], familia: row[1], unidade: row[13],
+            comp: row[3], larg: row[4], esp: row[5], m2: row[6], preco: row[8], compra: row[7] });
+        }
+        logEntries.push({ sku, descricao: row[2], field: 'NOVO ARTIGO (J5F)', oldValue: '', newValue: newPreco ?? '', note: syncNote });
+      } else {
+        summary.notInApp++;
+      }
       continue;
     }
-    if (item.preco) ratios.push(newPreco / item.preco);
+    if (item.preco && newPreco !== null) ratios.push(newPreco / item.preco);
     summary.matched++;
 
-    const precoChanged = item.preco === null || Math.abs(item.preco - newPreco) >= 0.0005;
+    const precoChanged = newPreco !== null && newPreco !== undefined &&
+      (item.preco === null || Math.abs(item.preco - newPreco) >= 0.0005);
     const valorCompraChanged = newValorCompra !== null &&
       (item.valorCompra === null || Math.abs(item.valorCompra - newValorCompra) >= 0.0005);
 
@@ -182,7 +200,7 @@ module.exports = async (req, res) => {
     ratios.sort((a, b) => a - b);
     const medianRatio = ratios.length ? Number(ratios[Math.floor(ratios.length / 2)].toFixed(4)) : null;
     summary.ok = true;
-    await finish(200, { ok: true, summary, medianRatio, preview });
+    await finish(200, { ok: true, summary, medianRatio, preview, newItems: newPreview });
     return;
   }
 
@@ -193,6 +211,16 @@ module.exports = async (req, res) => {
     summary.errors.push('Failed to write some or all price updates: ' + err.message);
     await finish(500, { error: 'Failed while writing updates', summary });
     return;
+  }
+
+  if (newRows.length > 0) {
+    try {
+      await appendItemRows(newRows);
+    } catch (err) {
+      console.error('Adding new items failed:', err);
+      summary.errors.push('Preços atualizados, mas falhou a criação de artigos novos: ' + err.message);
+      summary.added = 0;
+    }
   }
 
   try {
