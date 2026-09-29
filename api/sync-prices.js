@@ -21,7 +21,7 @@
 // Sheet writes. Vercel Cron always calls this endpoint with a plain GET
 // and no query string (see vercel.json), so that path is untouched.
 
-const { getAllItems, bulkUpdatePrices, appendItemRows, appendLogEntries, parsePtNumber, savePriceSyncStatus, getPriceSyncStatus } = require('../lib/sheets');
+const { getAllItems, bulkUpdatePrices, appendItemRows, deleteItemRows, setItemObservations, appendLogEntries, parsePtNumber, savePriceSyncStatus, getPriceSyncStatus } = require('../lib/sheets');
 const { getPriceListUpdates } = require('../lib/priceList');
 const { isJ5fAuthorized, parseJ5fProducts, buildNewItemRow, getJ5fIgnoreSet } = require('../lib/j5f');
 
@@ -200,11 +200,40 @@ module.exports = async (req, res) => {
     }
   }
 
+  // ── Products deleted in J5F (the PC script sends only codes that existed
+  // in J5F before and are gone now). Items still reserved on an active
+  // order are kept and flagged instead, so no open order loses its line.
+  const rowsToDelete = [];
+  const flagOnly = [];
+  const deletedPreview = [];
+  if (isJ5f) { summary.deleted = 0; summary.deleteSkipped = 0; }
+  const deletedList = isJ5f && Array.isArray(req.body && req.body.deleted) ? req.body.deleted : [];
+  for (const raw of deletedList) {
+    const code = String(raw || '').trim();
+    if (!/^\d{8}$/.test(code)) continue;
+    const item = sheetBySku.get(code);
+    if (!item) continue;
+    const reserved = (item.reservado || 0) > 0;
+    if (reserved) {
+      summary.deleteSkipped++;
+      flagOnly.push(item);
+    } else {
+      summary.deleted++;
+      rowsToDelete.push(item.rowNumber);
+      logEntries.push({ sku: code, descricao: item.descricao, field: 'APAGADO (J5F)',
+        oldValue: item.stock ?? '', newValue: '', note: 'Artigo apagado no J5F — linha removida (valor anterior = stock)' });
+    }
+    if (deletedPreview.length < 50) {
+      deletedPreview.push({ sku: code, descricao: item.descricao, stock: item.stock, reservado: item.reservado,
+        acao: reserved ? 'mantido (encomenda ativa)' : 'apagar' });
+    }
+  }
+
   if (dryRun) {
     ratios.sort((a, b) => a - b);
     const medianRatio = ratios.length ? Number(ratios[Math.floor(ratios.length / 2)].toFixed(4)) : null;
     summary.ok = true;
-    await finish(200, { ok: true, summary, medianRatio, preview, newItems: newPreview });
+    await finish(200, { ok: true, summary, medianRatio, preview, newItems: newPreview, deletedItems: deletedPreview });
     return;
   }
 
@@ -224,6 +253,22 @@ module.exports = async (req, res) => {
       console.error('Adding new items failed:', err);
       summary.errors.push('Preços atualizados, mas falhou a criação de artigos novos: ' + err.message);
       summary.added = 0;
+    }
+  }
+
+  // Deletions last: they shift row numbers, and every row-number-based
+  // write above has already happened.
+  if (flagOnly.length > 0) {
+    await setItemObservations(flagOnly.map((it) => it.rowNumber), 'Apagado no J5F — remover depois da encomenda')
+      .catch((err) => summary.errors.push('Falhou marcar artigos apagados: ' + err.message));
+  }
+  if (rowsToDelete.length > 0) {
+    try {
+      await deleteItemRows(rowsToDelete);
+    } catch (err) {
+      console.error('Deleting items failed:', err);
+      summary.errors.push('Falhou apagar artigos removidos do J5F: ' + err.message);
+      summary.deleted = 0;
     }
   }
 
