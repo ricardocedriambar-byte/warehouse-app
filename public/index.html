@@ -173,6 +173,15 @@
         <div id="admin-panel"></div>
       </section>
 
+      <!-- Split-view placeholder (tablet/desktop ≥1024px): fills the detail
+           pane while only the Inventário or Encomendas list is selected.
+           Shown/hidden purely by CSS — see applySplitLayout() in app.js. -->
+      <div class="split-empty" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="44" height="44"><path d="M4 5h16v14H4zM10 5v14" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linejoin="round"/></svg>
+        <div class="split-empty__text split-empty__text--browse">Selecione um artigo da lista</div>
+        <div class="split-empty__text split-empty__text--orders">Selecione uma encomenda da lista</div>
+      </div>
+
     </main>
 
     <!-- Tab bar -->

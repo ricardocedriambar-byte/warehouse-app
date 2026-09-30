@@ -574,8 +574,85 @@ function animateViewSwap(fromEl, toEl, direction) {
   };
 }
 
+// ── Tablet / widescreen split view ──────────────────────────
+// On wide screens (≥1024px — tablets in landscape, desktops) a list view and
+// its detail view show side by side instead of one replacing the other:
+// Inventário + artigo, Encomendas + encomenda (separação ou edição). The
+// list view is kept painted via data-pane="list" (app.css shows it even
+// though it's not the current view), the current detail view gets
+// data-pane="detail", and #app[data-split] switches the CSS to the
+// two-pane layout. When only the list is current, a placeholder fills the
+// detail pane (#app[data-split-detail="none"]). Below 1024px nothing here
+// applies and navigation is exactly the phone behaviour.
+const SPLIT_MQ = window.matchMedia?.('(min-width: 1024px)');
+const WIDE_NAV_MQ = window.matchMedia?.('(min-width: 768px)');
+const SPLIT_GROUPS = {
+  browse: { list: 'browse', details: ['item'] },
+  orders: { list: 'orders', details: ['order-pick', 'order-create'] },
+};
+function isSplitScreen() { return !!SPLIT_MQ?.matches; }
+function splitGroupOf(name) {
+  if (!isSplitScreen()) return null;
+  for (const [key, g] of Object.entries(SPLIT_GROUPS)) {
+    if (g.list === name || g.details.includes(name)) return key;
+  }
+  return null;
+}
+function applySplitLayout(name) {
+  const app = document.getElementById('app');
+  if (!app) return;
+  const group = splitGroupOf(name);
+  $$('.view[data-pane]').forEach(el => { delete el.dataset.pane; });
+  if (!group) {
+    delete app.dataset.split;
+    delete app.dataset.splitDetail;
+    return;
+  }
+  const g = SPLIT_GROUPS[group];
+  app.dataset.split = group;
+  app.dataset.splitDetail = name === g.list ? 'none' : name;
+  const listEl = document.querySelector(`.view[data-view="${g.list}"]`);
+  if (listEl) listEl.dataset.pane = 'list';
+  if (name !== g.list) {
+    const detailEl = document.querySelector(`.view[data-view="${name}"]`);
+    if (detailEl) detailEl.dataset.pane = 'detail';
+  }
+  markSplitSelection();
+}
+// Highlights the row/card in the list pane that the detail pane is showing.
+function markSplitSelection() {
+  const app = document.getElementById('app');
+  const split = app?.dataset.split;
+  const detail = app?.dataset.splitDetail;
+  $$('.browse-row[data-selected], .order-card[data-selected]').forEach(el => el.removeAttribute('data-selected'));
+  if (split === 'browse' && detail === 'item' && state.currentItem?.sku) {
+    $$('#browse-list .browse-row').forEach(el => {
+      if (el.dataset.sku === state.currentItem.sku) el.dataset.selected = 'true';
+    });
+  } else if (split === 'orders' && detail === 'order-pick' && orderState.currentOrder?.orderId) {
+    $$('#orders-list .order-card').forEach(el => {
+      if (el.dataset.orderId === orderState.currentOrder.orderId) el.dataset.selected = 'true';
+    });
+  }
+}
+// The list pane is visible alongside a detail view in split mode, so
+// background refreshes need to re-render it too (see refreshVisible*Views).
+function splitListVisible(listName) {
+  return document.querySelector(`.view[data-view="${listName}"]`)?.dataset.pane === 'list';
+}
+
 function setView(name, { pushHistory = true, direction } = {}) {
   const fromName = currentViewName;
+  // In split mode, picking another row while its detail is already open
+  // just swaps the detail pane's content — no extra history entry, so Back
+  // closes the detail instead of stepping through every row tapped.
+  if (name === fromName && splitGroupOf(name) && SPLIT_GROUPS[splitGroupOf(name)].list !== name) {
+    pushHistory = false;
+  }
+  // Sliding whole screens sideways looks wrong once there's a side rail
+  // and/or two panes; wide layouts swap instantly (app.css adds a short
+  // fade-in instead).
+  if (WIDE_NAV_MQ?.matches) direction = 'instant';
   if (name !== fromName) {
     // Leaving order-create by ANY route (back button, a tab tap, the
     // browser/gesture back navigation) must stop the draft-autosave
@@ -597,7 +674,12 @@ function setView(name, { pushHistory = true, direction } = {}) {
     else if (toEl) toEl.dataset.active = 'true';
     currentViewName = name;
   }
-  $$('.tabbar__btn').forEach(el => el.dataset.active = String(el.dataset.goto === name));
+  applySplitLayout(name);
+  // In split mode the rail keeps the list's tab highlighted while one of
+  // its detail views is open next to it.
+  const splitGroup = splitGroupOf(name);
+  const navName = splitGroup ? SPLIT_GROUPS[splitGroup].list : name;
+  $$('.tabbar__btn').forEach(el => el.dataset.active = String(el.dataset.goto === navName));
   $('.topbar')?.classList.toggle('topbar--hidden', name === 'viaturas');
   if (name !== 'scan') stopScanner();
   if (pushHistory) {
@@ -821,6 +903,7 @@ function refreshVisibleItemViews() {
   } else if (viewName === 'item' && state.currentItem?.sku) {
     const fresh = state.items.find(i => i.sku === state.currentItem.sku);
     if (fresh) renderItemDetail(fresh);
+    if (splitListVisible('browse')) renderBrowseList($('#browse-search')?.value || '');
   } else if (viewName === 'home') {
     renderHome();
   }
@@ -841,6 +924,9 @@ function refreshVisibleOrderViews() {
       orderState.currentOrder = fresh;
       renderOrderPick(fresh, fresh.status === 'Rascunho');
     }
+    if (splitListVisible('orders')) renderOrdersList();
+  } else if (viewName === 'order-create' && splitListVisible('orders')) {
+    renderOrdersList();
   } else if (viewName === 'home') {
     renderHome();
   }
@@ -872,6 +958,12 @@ function renderItemDetail(item) {
     return;
   }
 
+  // A different article replacing the one on screen (e.g. picking another
+  // row in the split-view list) starts at the top, not mid-scroll.
+  if (state.currentItem?.sku !== item.sku) {
+    const itemView = document.querySelector('.view[data-view="item"]');
+    if (itemView) itemView.scrollTop = 0;
+  }
   state.currentItem = item;
   const low = item.stock !== null && item.stock <= 0;
   const m2Total = item.unidade === 'm²' && item.dimensaoM2 && item.stock !== null
@@ -965,6 +1057,7 @@ function renderItemDetail(item) {
       await saveField('unidade', unit);
     });
   });
+  markSplitSelection();
 }
 
 function wireFieldCard(root, key, initialValue, onSave) {
@@ -1210,6 +1303,7 @@ function renderBrowseList(query) {
         </div>
       </button>`;
   }).join('');
+  markSplitSelection();
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1376,6 +1470,7 @@ function renderOrdersList() {
 
   list.innerHTML = backorderBanner + sorted.map(renderOrderCardHTML).join('');
   animateProgressBars(list);
+  markSplitSelection();
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1478,8 +1573,13 @@ async function openOrderDetail(orderId, direction) {
   const order = orderState.orders.find(o => o.orderId === orderId);
   if (!order) return;
   orderState.currentOrder = order;
+  if (currentViewName === 'order-pick' && isSplitScreen()) {
+    const pickView = document.querySelector('.view[data-view="order-pick"]');
+    if (pickView) pickView.scrollTop = 0;
+  }
   renderOrderPick(order, order.status === 'Rascunho');
   setView('order-pick', direction ? { direction } : {});
+  markSplitSelection();
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -3574,6 +3674,15 @@ function init() {
   // Tab bar
   $$('.tabbar__btn').forEach(btn => {
     btn.addEventListener('click', () => activateTab(btn.dataset.goto));
+  });
+
+  // Rotating a tablet or resizing a desktop window across the 1024px split
+  // breakpoint re-applies the layout for whatever is on screen now, and
+  // fills the list pane if it just became visible.
+  SPLIT_MQ?.addEventListener?.('change', () => {
+    setView(currentViewName, { pushHistory: false });
+    if (splitListVisible('browse')) renderBrowseList($('#browse-search')?.value || '');
+    if (splitListVisible('orders')) renderOrdersList();
   });
 
   // Delegated once here, instead of per-card in renderOrdersList, so

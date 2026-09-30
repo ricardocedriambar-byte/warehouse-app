@@ -2045,3 +2045,180 @@ select.order-field { padding: 12px var(--sp-4); }
   display: flex; flex-direction: column; gap: 4px;
 }
 
+
+/* ═══════════════════════════════════════════════════════════
+   TABLET / WIDESCREEN LAYOUT
+   ═══════════════════════════════════════════════════════════
+   ≥768px  (tablet portrait and up): the app uses the full width, the
+           bottom tab bar becomes a vertical side rail, lists become
+           multi-column grids and forms/detail screens are centered at a
+           readable width.
+   ≥1024px (tablet landscape, desktop): list + detail split view for
+           Inventário → artigo and Encomendas → encomenda. Driven by
+           applySplitLayout() in app.js, which sets #app[data-split],
+           #app[data-split-detail] and .view[data-pane="list|detail"].
+   Below 768px none of this applies — the phone layout is unchanged. */
+.split-empty { display: none; }
+
+@media (min-width: 768px) {
+  :root { --rail-w: 88px; --split-list-w: clamp(340px, 36%, 440px); }
+
+  #app {
+    max-width: none;
+    display: grid;
+    grid-template-columns: var(--rail-w) minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-areas: "rail top" "rail main";
+  }
+  .topbar { grid-area: top; padding-left: var(--sp-5); padding-right: max(var(--sp-5), env(safe-area-inset-right)); }
+  .views  { grid-area: main; }
+
+  /* Bottom tab bar → vertical side rail */
+  .tabbar {
+    grid-area: rail;
+    flex-direction: column;
+    justify-content: flex-start;
+    gap: var(--sp-1);
+    border-top: none;
+    border-right: 1px solid var(--b1);
+    padding: max(14px, env(safe-area-inset-top)) 0 max(14px, env(safe-area-inset-bottom)) env(safe-area-inset-left);
+    overflow-y: auto;
+  }
+  .tabbar__btn { flex: 0 0 auto; padding: 12px 4px 10px; font-size: 11px; }
+  .tabbar__btn::before { top: 7px; width: 52px; height: 32px; }
+
+  /* No sideways slide on wide layouts (see setView in app.js) — a short
+     fade marks the change instead. */
+  .view[data-active="true"]:not([data-pane="list"]) { animation: view-fade-in 0.16s ease-out; }
+  @keyframes view-fade-in { from { opacity: 0; } to { opacity: 1; } }
+
+  /* Toast: centered over the content area instead of edge-to-edge */
+  .toast {
+    left: calc(var(--rail-w) + (100% - var(--rail-w)) / 2);
+    right: auto;
+    width: min(460px, calc(100% - var(--rail-w) - 2 * var(--sp-4)));
+    bottom: max(24px, env(safe-area-inset-bottom));
+    transform: translate(-50%, 8px);
+  }
+  .toast[data-show="true"] { transform: translate(-50%, 0); }
+
+  /* Readable widths for form / detail screens */
+  #item-detail, #order-create-panel, #order-pick-panel,
+  #settings-panel, #admin-panel, #recursos-panel {
+    max-width: 820px;
+    margin-inline: auto;
+  }
+  .view[data-view="scan"] { padding-top: var(--sp-4); }
+  .scan-stage { width: min(520px, 62dvh, calc(100% - 2 * var(--sp-4))); margin: 0 auto var(--sp-4); }
+  .manual-entry { width: min(520px, calc(100% - 2 * var(--sp-4))); margin: 0 auto var(--sp-6); }
+
+  /* Inventário: search + filter on one row, rows in a grid */
+  .browse__search { display: flex; align-items: center; gap: var(--sp-3); }
+  .browse__search input { flex: 1; min-width: 0; }
+  .browse__filter-chip { margin-top: 0; flex: 0 0 auto; }
+  .browse__list, .orders-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    align-items: start;
+  }
+  .browse__list > :not(.browse-row),
+  .orders-list > :not(.order-card) { grid-column: 1 / -1; }
+
+  /* Encomendas: "Nova encomenda" and filters share one header row */
+  .view[data-view="orders"] { display: none; }
+  .view[data-view="orders"][data-active="true"],
+  .view[data-view="orders"][data-pane="list"] {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    grid-template-rows: auto auto;
+    align-content: start;
+  }
+  .view[data-view="orders"] .orders-filters { grid-row: 1; grid-column: 1; align-self: center; padding: var(--sp-4) var(--sp-4) var(--sp-3); }
+  .view[data-view="orders"] .orders-header  { grid-row: 1; grid-column: 2; padding: var(--sp-4) var(--sp-4) var(--sp-3); }
+  .view[data-view="orders"] .orders-list    { grid-row: 2; grid-column: 1 / -1; }
+
+  /* Início */
+  #home-panel { max-width: 1200px; margin-inline: auto; }
+  .home-section__list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    align-items: start;
+  }
+  .home-section__list > .home-empty { grid-column: 1 / -1; }
+
+  /* Recursos: supplier rows as a grid */
+  .resources-list:has(> .resources-supplier-row) {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  }
+
+  /* Full-screen overlays (item search, new product/client, price-sync
+     summary) keep covering the app but center their content. */
+  .item-search-overlay > * { width: 100%; max-width: 820px; margin-inline: auto; }
+  .item-search-overlay__header { border-bottom: none; box-shadow: 0 1px 0 var(--b1); }
+
+  @media (hover: hover) and (prefers-reduced-motion: no-preference) {
+    .tabbar__btn:hover:not([data-active="true"]) { color: var(--t1); }
+    .browse-row:hover, .order-card:hover, .resources-supplier-row:hover { background: var(--s2); }
+  }
+}
+
+@media (min-width: 1024px) {
+  /* Início: stats across the top, the two lists side by side */
+  #home-panel {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    column-gap: var(--sp-2);
+    align-content: start;
+  }
+  #home-panel > .home-stats { grid-column: 1 / -1; }
+  #home-panel > .home-section .home-section__list { grid-template-columns: 1fr; }
+
+  /* ── Split view ─────────────────────────────────────────── */
+  #app[data-split] .view[data-pane="list"] {
+    display: block;
+    right: auto;
+    width: var(--split-list-w);
+    border-right: 1px solid var(--b1);
+    background: var(--bg);
+  }
+  #app[data-split="orders"] .view[data-pane="list"] { display: grid; }
+  #app[data-split] .view[data-pane="list"] .browse__list,
+  #app[data-split] .view[data-pane="list"] .orders-list { grid-template-columns: 1fr; }
+  #app[data-split] .view[data-pane="list"] .browse__search { flex-wrap: wrap; }
+  #app[data-split] .view[data-pane="detail"] { left: var(--split-list-w); }
+  /* The list is right there, so the detail's own "‹ Voltar/Encomendas"
+     button is redundant (order-create keeps its back button — it doubles
+     as "cancel edit"). */
+  #app[data-split] .view[data-pane="detail"][data-view="item"] .back-btn,
+  #app[data-split] .view[data-pane="detail"] #pick-back-btn { display: none; }
+  #app[data-split] .view[data-pane="detail"][data-view="item"] .item-detail,
+  #app[data-split] .view[data-pane="detail"] .order-pick { padding-top: var(--sp-5); }
+
+  /* Row / card currently open in the detail pane */
+  .browse-row[data-selected="true"],
+  .order-card[data-selected="true"] {
+    background: var(--s2);
+    box-shadow: inset 3px 0 0 var(--id), 0 0 0 1px var(--b2);
+  }
+
+  /* Detail-pane placeholder while only the list is selected */
+  #app[data-split-detail="none"] .split-empty {
+    position: absolute; top: 0; bottom: 0; right: 0;
+    left: var(--split-list-w);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: var(--sp-3);
+    color: var(--t3);
+    font-size: 14px;
+    text-align: center;
+    padding: var(--sp-6);
+  }
+  .split-empty svg { opacity: 0.35; }
+  .split-empty__text { display: none; }
+  #app[data-split="browse"] .split-empty__text--browse,
+  #app[data-split="orders"] .split-empty__text--orders { display: block; }
+
+  /* Overlays opened from the detail pane cover only that pane, so the
+     list stays visible next to e.g. the order's item search. */
+  #app[data-split] > .item-search-overlay { left: calc(var(--rail-w) + var(--split-list-w)); }
+}
