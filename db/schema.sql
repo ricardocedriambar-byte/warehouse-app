@@ -5,7 +5,8 @@
 -- push e as abas pequenas (MateriaisPortas, LogosFornecedores, …) continuam
 -- no Google Sheets nesta fase.
 --
--- Idempotente: pode ser corrido mais do que uma vez.
+-- Idempotente: pode ser corrido mais do que uma vez. Já aplicado no projeto
+-- Supabase "cedriambar-db" (migrações fase1_artigos_stocklog + fase1_encomendas).
 --
 -- Segurança: RLS ligado em todas as tabelas SEM políticas — a API pública do
 -- Supabase (anon key / PostgREST) não consegue ler nem escrever nada. Só o
@@ -91,12 +92,14 @@ create table if not exists encomenda_linhas (
   unique (order_id, posicao)
 );
 create index if not exists encomenda_linhas_sku_idx on encomenda_linhas (sku);
+create index if not exists encomenda_linhas_order_idx on encomenda_linhas (order_id);
 
 -- ─── updated_at automático nos artigos ─────────────────────────────────────
-create or replace function artigos_touch() returns trigger language plpgsql as $$
+create or replace function artigos_touch() returns trigger language plpgsql
+set search_path = ''
+as $$
 begin new.atualizado_em := now(); return new; end $$;
-drop trigger if exists artigos_touch on artigos;
-create trigger artigos_touch before update on artigos for each row execute function artigos_touch();
+create or replace trigger artigos_touch before update on artigos for each row execute function artigos_touch();
 
 -- ─── Bloquear a API pública do Supabase ─────────────────────────────────────
 alter table artigos           enable row level security;
