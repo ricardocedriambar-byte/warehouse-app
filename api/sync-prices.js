@@ -71,8 +71,9 @@ module.exports = async (req, res) => {
       return;
     }
     try {
-      const { runMigration } = require('../lib/migrate');
-      const result = await runMigration({ confirm: req.query.confirm === '1', replace: req.query.replace === '1' });
+      const { runMigration, runMigrationFase2 } = require('../lib/migrate');
+      const run = req.query.fase === '2' ? runMigrationFase2 : runMigration;
+      const result = await run({ confirm: req.query.confirm === '1', replace: req.query.replace === '1' });
       res.status(200).json({ ok: true, ...result });
     } catch (err) {
       console.error('Migration failed:', err);

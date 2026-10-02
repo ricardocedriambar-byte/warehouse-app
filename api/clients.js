@@ -11,6 +11,8 @@
 const { getAllClients, createClient } = require('../lib/orders');
 const { sheetsFetch } = require('../lib/sheets');
 const { isJ5fAuthorized, syncJ5fClients } = require('../lib/j5f');
+const { usePostgresFase2 } = require('../lib/db');
+const { importClientRows } = require('../lib/db-fase2');
 
 const CLIENTS_TAB = 'Clientes';
 const BATCH_SIZE = 500; // Sheets API limit per batchUpdate call
@@ -65,6 +67,12 @@ async function importClients(req, res) {
 
   if (sheetRows.length === 0) {
     res.status(200).json({ ok: true, imported: 0, skipped });
+    return;
+  }
+
+  if (usePostgresFase2()) {
+    const inserted = await importClientRows(sheetRows);
+    res.status(200).json({ ok: true, imported: inserted, skipped, message: `${inserted} clientes importados, ${skipped} ignorados` });
     return;
   }
 
