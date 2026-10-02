@@ -63,6 +63,24 @@ module.exports = async (req, res) => {
     return;
   }
 
+  // One-shot Sheets → Postgres import (see lib/migrate.js). Needs a secret
+  // to be configured — never runs on an open endpoint.
+  if (req.query.migrate === '1') {
+    if (!(process.env.CRON_SECRET || process.env.SYNC_SECRET)) {
+      res.status(403).json({ error: 'Defina CRON_SECRET no Vercel antes de migrar' });
+      return;
+    }
+    try {
+      const { runMigration } = require('../lib/migrate');
+      const result = await runMigration({ confirm: req.query.confirm === '1', replace: req.query.replace === '1' });
+      res.status(200).json({ ok: true, ...result });
+    } catch (err) {
+      console.error('Migration failed:', err);
+      res.status(500).json({ error: err.message });
+    }
+    return;
+  }
+
   if (req.query.status === '1') {
     try {
       const status = await getPriceSyncStatus();

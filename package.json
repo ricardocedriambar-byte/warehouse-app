@@ -10,6 +10,7 @@
     "google-auth-library": "^9.14.1",
     "xlsx": "^0.18.5",
 	"pdf-lib": "^1.17.1",
-	"web-push": "^3.6.7"
+	"web-push": "^3.6.7",
+	"postgres": "^3.4.9"
   }
 }
