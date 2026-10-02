@@ -1369,6 +1369,8 @@ function renderOrderCardHTML(order) {
   const pct         = totalLines > 0 ? Math.round((pickedLines / totalLines) * 100) : 0;
   const complete    = pickedLines === totalLines && totalLines > 0;
   const date        = order.createdAt ? new Date(order.createdAt).toLocaleDateString('pt-PT') : '';
+  const pendingLines = isActiveOrder(order)
+    ? order.lines.filter(l => PENDING_LINE_STATUSES.includes(l.lineStatus)).length : 0;
 
   return `
     <button class="order-card" data-order-id="${order.orderId}">
@@ -1377,7 +1379,7 @@ function renderOrderCardHTML(order) {
         <span class="order-card__status" data-status="${order.status}">${order.status}</span>
       </div>
       <div class="order-card__client">${order.clientName || '—'}</div>
-      <div class="order-card__meta">${totalLines} artigo${totalLines !== 1 ? 's' : ''} · ${date}${order.salesperson ? ' · ' + order.salesperson : ''}</div>
+      <div class="order-card__meta">${totalLines} artigo${totalLines !== 1 ? 's' : ''} · ${date}${order.salesperson ? ' · ' + order.salesperson : ''}${pendingLines ? ` · <span class="order-card__pending">${pendingLines} por chegar</span>` : ''}</div>
       <div class="order-card__progress">
         <div class="order-card__progress-bar" data-complete="${complete}" style="width:${pct}%"></div>
       </div>
@@ -2787,6 +2789,57 @@ async function notifyOrderByEmail(order, client) {
 }
 
 // ═══════════════════════════════════════════════════════════
+// LINE STATUS (Encomendado / Em produção / Recebido)
+// ═══════════════════════════════════════════════════════════
+// Per-line supplier/production tracking — see lib/orders.js
+// LINE_STATUSES. Only vendedor/admin change it, only while the order is
+// still active; armazém just sees a read-only chip so they know which
+// items aren't on the shelf yet.
+const LINE_STATUSES = ['Encomendado', 'Em produção', 'Recebido'];
+const LINE_STATUS_EDITABLE_ORDER = ['Rascunho', 'Enviado', 'Em separação'];
+const PENDING_LINE_STATUSES = ['Encomendado', 'Em produção'];
+
+function canMarkLineStatus(order) {
+  return LINE_STATUS_EDITABLE_ORDER.includes(order.status)
+    && (auth.isVendedor() || auth.isAdmin());
+}
+
+// ASCII key for CSS hooks (keeps "Em produção" out of attribute selectors).
+function lineStatusKey(st) {
+  return { 'Encomendado': 'encomendado', 'Em produção': 'producao', 'Recebido': 'recebido' }[st] || 'none';
+}
+
+function fmtShortDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleDateString('pt-PT', { day: '2-digit', month: '2-digit' });
+}
+
+function lineStatusChipHTML(line) {
+  if (!line.lineStatus) return '';
+  const since = fmtShortDate(line.lineStatusAt);
+  return `<span class="line-status-chip" data-status="${lineStatusKey(line.lineStatus)}">${line.lineStatus}${since ? ` · ${since}` : ''}</span>`;
+}
+
+function lineStatusControlHTML(order, line) {
+  if (!canMarkLineStatus(order)) {
+    return line.lineStatus ? `<div class="pick-line__status-row">${lineStatusChipHTML(line)}</div>` : '';
+  }
+  const since = fmtShortDate(line.lineStatusAt);
+  return `
+    <div class="pick-line__status-row">
+      <label class="line-status-select" data-status="${lineStatusKey(line.lineStatus)}">
+        <select class="pick-line__status-select" aria-label="Estado da linha">
+          <option value=""${!line.lineStatus ? ' selected' : ''}>Sem marcação</option>
+          ${LINE_STATUSES.map(st => `<option value="${st}"${line.lineStatus === st ? ' selected' : ''}>${st}</option>`).join('')}
+        </select>
+      </label>
+      ${line.lineStatus && since ? `<span class="pick-line__status-since">desde ${since}</span>` : ''}
+    </div>`;
+}
+
+// ═══════════════════════════════════════════════════════════
 // ORDER PICK VIEW
 // ═══════════════════════════════════════════════════════════
 function renderOrderPick(order, isDraft) {
@@ -2810,7 +2863,10 @@ function renderOrderPick(order, isDraft) {
         ${order.orderNotes ? `<div style="font-size:13px;color:var(--t3);margin-top:4px">${order.orderNotes}</div>` : ''}
         ${order.editedBy ? `<div class="order-pick__edited-note">Editado por ${order.editedBy}${fmtDateTime(order.editedAt) ? ' às ' + fmtDateTime(order.editedAt) : ''}</div>` : ''}
         <div class="order-pick__progress-row">
-          <span class="order-pick__progress-label">${pickedCount} de ${order.lines.length} separados</span>
+          <span class="order-pick__progress-label">${pickedCount} de ${order.lines.length} separados${(() => {
+            const pending = order.lines.filter(l => PENDING_LINE_STATUSES.includes(l.lineStatus)).length;
+            return pending ? ` · <span class="order-pick__pending">${pending} por chegar</span>` : '';
+          })()}</span>
           ${!isDraft && order.status === 'Enviado'
             ? `<button class="orders-filter-btn active" id="start-picking-btn">Iniciar separação</button>` : ''}
         </div>
@@ -2857,6 +2913,7 @@ function renderOrderPick(order, isDraft) {
               </div>
               <div class="pick-line__desc"${isIndented ? ' style="padding-left:16px;color:var(--t2);font-size:13px"' : ''}>${line.descricao.trim()}</div>
               ${isIndented ? '' : `<div class="pick-line__dims">${fmtNumber(line.comprimento,0)}×${fmtNumber(line.largura,0)}×${fmtNumber(line.espessura,0)}mm${line.unitPrice ? ` · ${fmtCurrency(line.unitPrice)}/${line.unidade||'un'}` : ''}</div>`}
+              ${lineStatusControlHTML(order, line)}
               ${order.status === 'Em separação' ? `
                 <div class="pick-line__actions">
                   <div class="pick-line__qty-group">
@@ -2963,6 +3020,36 @@ function renderOrderPick(order, isDraft) {
       } catch (err) { showError(err, 'Não foi possível iniciar a separação. Tente novamente.'); }
     });
   }
+
+  // Line status (Encomendado / Em produção / Recebido)
+  panel.querySelectorAll('.pick-line__status-select').forEach(select => {
+    const lineEl    = select.closest('.pick-line');
+    const lineIndex = Number(lineEl.dataset.lineIndex);
+    const wrap      = select.closest('.line-status-select');
+    select.addEventListener('change', async () => {
+      const line = order.lines[lineIndex];
+      if (!line) return;
+      const prev = line.lineStatus || '';
+      const next = select.value;
+      select.disabled = true;
+      if (wrap) wrap.dataset.status = lineStatusKey(next);
+      try {
+        const res = await apiPatch('/api/orders', { orderId: order.orderId, lineIndex, lineStatus: next });
+        line.lineStatus   = res.lineStatus || '';
+        line.lineStatusAt = res.lineStatusAt || '';
+        const idx = orderState.orders.findIndex(o => o.orderId === order.orderId);
+        if (idx !== -1) orderState.orders[idx] = order;
+        if (orderState.currentOrder?.orderId === order.orderId) orderState.currentOrder = order;
+        renderOrderPick(order, isDraft);
+        toast(next ? `Marcado como ${next.toLowerCase()}` : 'Marcação removida', 'success');
+      } catch (err) {
+        select.value = prev;
+        if (wrap) wrap.dataset.status = lineStatusKey(prev);
+        select.disabled = false;
+        showError(err, 'Não foi possível alterar o estado da linha. Tente novamente.');
+      }
+    });
+  });
 
   // Pick confirm buttons
   panel.querySelectorAll('.pick-line').forEach(lineEl => {

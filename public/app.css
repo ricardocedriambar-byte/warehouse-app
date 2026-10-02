@@ -1253,6 +1253,47 @@ select.order-field { padding: 12px var(--sp-4); }
 }
 .pick-line__qty-badge[data-done="true"] { background: var(--success-bg); color: var(--success); }
 .pick-line__desc { font-size: 15px; font-weight: 600; margin-bottom: 2px; }
+
+/* ── Line status (Encomendado / Em produção / Recebido) ── */
+.pick-line__status-row {
+  display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap;
+  margin: -4px 0 var(--sp-3);
+}
+.pick-line__status-row:last-child { margin-bottom: 0;
+}
+.line-status-chip,
+.line-status-select {
+  --ls-fg: var(--t2); --ls-bg: var(--s3); --ls-bd: var(--b1);
+  display: inline-flex; align-items: center;
+  font-size: 12px; font-weight: 600;
+  color: var(--ls-fg); background: var(--ls-bg);
+  border: 1px solid var(--ls-bd); border-radius: var(--r-full);
+}
+.line-status-chip { padding: 3px 10px; }
+.line-status-select { position: relative; }
+.line-status-select select {
+  appearance: none; -webkit-appearance: none;
+  background: transparent; border: 0; color: inherit; font: inherit;
+  padding: 5px 28px 5px 12px; min-height: 30px; cursor: pointer;
+}
+.line-status-select::after {
+  content: ''; position: absolute; right: 11px; top: 50%;
+  width: 6px; height: 6px; margin-top: -5px;
+  border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg); pointer-events: none;
+}
+.line-status-select select:disabled { opacity: 0.6; }
+.line-status-select select option { color: var(--t1); background: var(--s1); }
+.line-status-select[data-status="none"] { --ls-fg: var(--t3); --ls-bg: transparent; border-style: dashed; }
+.line-status-chip[data-status="encomendado"],
+.line-status-select[data-status="encomendado"] { --ls-fg: var(--info); --ls-bg: var(--info-bg); --ls-bd: transparent; }
+.line-status-chip[data-status="producao"],
+.line-status-select[data-status="producao"] { --ls-fg: var(--warning); --ls-bg: var(--warning-bg, rgba(200,136,60,0.12)); --ls-bd: transparent; }
+.line-status-chip[data-status="recebido"],
+.line-status-select[data-status="recebido"] { --ls-fg: var(--success); --ls-bg: var(--success-bg); --ls-bd: transparent; }
+.pick-line__status-since { font-size: 11px; color: var(--t3); }
+.order-pick__pending,
+.order-card__pending { color: var(--warning); font-weight: 600; }
 .pick-line__dims { font-family: var(--mono); font-size: 10px; color: var(--t3); margin-bottom: var(--sp-3); }
 .pick-line__actions { display: flex; gap: var(--sp-2); align-items: stretch; }
 .pick-line__qty-group {

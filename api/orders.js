@@ -14,6 +14,10 @@
 //                                    (has `lines` → full-content edit;
 //                                    otherwise falls back to the plain
 //                                    status-only update above)
+//                                  → OR mark one line's supplier state
+//                                    body: { orderId, lineIndex, lineStatus }
+//                                    lineStatus: 'Encomendado' | 'Em produção'
+//                                    | 'Recebido' | '' (clear)
 //
 // The actual data-layer logic (talking to Google Sheets) lives in
 // lib/orders.js — this file only handles the HTTP request/response and
@@ -24,7 +28,8 @@ const {
   getOrderById,
   createOrder,
   updateOrderStatus,
-  updateOrderContent
+  updateOrderContent,
+  updateLineStatus
 } = require('../lib/orders');
 
 module.exports = async (req, res) => {
@@ -51,9 +56,17 @@ module.exports = async (req, res) => {
     }
 
     if (req.method === 'PATCH') {
-      const { orderId, status, lines, orderNotes, orderType, doorsData, editedBy } = req.body || {};
+      const { orderId, status, lines, orderNotes, orderType, doorsData, editedBy, lineIndex, lineStatus } = req.body || {};
       if (!orderId) {
         res.status(400).json({ error: 'orderId é obrigatório' });
+        return;
+      }
+
+      // Per-line supplier/production marking (Encomendado / Em produção /
+      // Recebido, or '' to clear) — body: { orderId, lineIndex, lineStatus }.
+      if (lineStatus !== undefined && lineIndex !== undefined) {
+        const result = await updateLineStatus(orderId, Number(lineIndex), lineStatus || '');
+        res.status(200).json({ ok: true, ...result });
         return;
       }
 
