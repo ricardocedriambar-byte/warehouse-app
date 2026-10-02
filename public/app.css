@@ -833,6 +833,18 @@ input[type=number] { -moz-appearance: textfield; }
    overlay used when adding items to an order) when more items matched
    than are actually rendered — without it, an item past the cutoff was
    just silently missing with no clue it existed. */
+.list-more {
+  display: flex; flex-direction: column; align-items: center; gap: var(--sp-2);
+  padding: var(--sp-4) 0 var(--sp-3);
+}
+.list-more__count { font-family: var(--mono); font-size: 11px; color: var(--t3); }
+.list-more__btn {
+  background: var(--s2, var(--s1)); color: var(--t2);
+  border: 1px solid var(--b1); border-radius: var(--r-full);
+  padding: 8px 18px; font-size: 13px; font-weight: 600;
+}
+.list-more__btn:active { transform: scale(0.97); }
+
 .results-truncated-hint {
   font-size: 12px; color: var(--t3);
   background: var(--s3); border-radius: var(--r-sm);

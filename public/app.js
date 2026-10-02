@@ -1314,6 +1314,65 @@ function scanLoopFallback(video) {
 }
 
 // ═══════════════════════════════════════════════════════════
+// INCREMENTAL LISTS ("mostrar mais" / scroll infinito)
+// ═══════════════════════════════════════════════════════════
+// Every item is already in memory (state.items), but drawing all ~2500
+// rows at once makes the list slow to open and scroll on weaker phones.
+// So rows are drawn a page at a time: the first `pageSize`, then another
+// page whenever the end of the list scrolls into view (or the "Mostrar
+// mais" button is tapped, as a fallback). `key` identifies the current
+// query/filter — a re-render with the same key (e.g. the 30s background
+// refresh) keeps however many rows were already shown instead of
+// collapsing the list back to the first page under the person's thumb.
+function renderIncrementalList(container, items, rowHtml, { pageSize = 150, key = '', footerHtml = '', onAppend } = {}) {
+  const prev = container._incr;
+  if (prev && prev.observer) prev.observer.disconnect();
+  const shown = Math.min(items.length, (prev && prev.key === key) ? Math.max(prev.shown, pageSize) : pageSize);
+  const st = { key, shown, observer: null };
+  container._incr = st;
+
+  const footer = () => {
+    const rest = items.length - st.shown;
+    return rest > 0
+      ? `<div class="list-more" data-list-more>
+           <span class="list-more__count">A mostrar ${st.shown} de ${items.length}</span>
+           <button class="list-more__btn" type="button" data-list-more-btn>Mostrar mais (${rest})</button>
+         </div>`
+      : '';
+  };
+
+  container.innerHTML = items.slice(0, st.shown).map(rowHtml).join('') + footer() + footerHtml;
+
+  const showMore = () => {
+    if (container._incr !== st || st.shown >= items.length) return;
+    const from = st.shown;
+    st.shown = Math.min(items.length, st.shown + pageSize);
+    const more = container.querySelector('[data-list-more]');
+    if (!more) return;
+    more.insertAdjacentHTML('beforebegin', items.slice(from, st.shown).map(rowHtml).join(''));
+    more.outerHTML = footer();
+    attach();
+    if (onAppend) onAppend();
+  };
+
+  const attach = () => {
+    const more = container.querySelector('[data-list-more]');
+    if (!more) { if (st.observer) st.observer.disconnect(); return; }
+    more.querySelector('[data-list-more-btn]').addEventListener('click', showMore);
+    if (typeof window.IntersectionObserver === 'function') {
+      if (!st.observer) {
+        st.observer = new IntersectionObserver(entries => {
+          if (entries.some(e => e.isIntersecting)) showMore();
+        }, { rootMargin: '400px 0px' });
+      }
+      st.observer.disconnect();
+      st.observer.observe(more);
+    }
+  };
+  attach();
+}
+
+// ═══════════════════════════════════════════════════════════
 // BROWSE
 // ═══════════════════════════════════════════════════════════
 function renderBrowseList(query) {
@@ -1354,16 +1413,9 @@ function renderBrowseList(query) {
     return;
   }
 
-  const BROWSE_LIMIT = 150;
-  // Silently cutting the list off at 150 with no indication meant an item
-  // further down an unfiltered (or broadly-matching) list on a large
-  // catalog could be invisible with no clue it was ever there — this
-  // makes the cutoff visible instead of just missing.
-  const truncatedHint = filtered.length > BROWSE_LIMIT
-    ? `<div class="results-truncated-hint">A mostrar ${BROWSE_LIMIT} de ${filtered.length} resultados — refine a pesquisa para ver mais</div>`
-    : '';
-
-  list.innerHTML = truncatedHint + filtered.slice(0, BROWSE_LIMIT).map(item => {
+  // Drawn 150 at a time, with more loaded as the end of the list comes
+  // into view — see renderIncrementalList.
+  renderIncrementalList(list, filtered, item => {
     const low = item.stock !== null && item.stock <= 0;
     return `
       <button class="browse-row" data-sku="${item.sku}">
@@ -1377,7 +1429,7 @@ function renderBrowseList(query) {
           <span class="browse-row__stock" data-low="${low}">${fmtNumber(item.stock, 1)}</span>
         </div>
       </button>`;
-  }).join('');
+  }, { pageSize: 150, key: `${q}|${state.browseLowStockOnly ? 1 : 0}`, onAppend: markSplitSelection });
   markSplitSelection();
 }
 
@@ -2277,16 +2329,8 @@ async function showItemSearchOverlay() {
       return;
     }
 
-    const RESULTS_LIMIT = 60;
-    const filtered = matched.slice(0, RESULTS_LIMIT);
-    // Same silent-cutoff problem as Inventário's search: past 60 matches,
-    // an item was just invisible with nothing telling the person to narrow
-    // their search to find it.
-    const truncatedHint = matched.length > RESULTS_LIMIT
-      ? `<div class="results-truncated-hint">A mostrar ${RESULTS_LIMIT} de ${matched.length} resultados — refine a pesquisa para ver mais</div>`
-      : '';
-
-    results.innerHTML = truncatedHint + filtered.map(item => {
+    // Drawn 60 at a time, more as the end comes into view.
+    renderIncrementalList(results, matched, item => {
       const disp = item.disponivel ?? item.stock;
       // Flag it red at zero, or below its STOCK MÍNIMO when one is set —
       // same threshold the Home dashboard and the email alert use, so a
@@ -2310,11 +2354,11 @@ async function showItemSearchOverlay() {
           </div>
         </div>
       </button>`;
-    }).join('') + `
+    }, { pageSize: 60, key: ql, footerHtml: `
       <button class="add-item-btn" data-action="new-product">
         <svg viewBox="0 0 24 24" width="16" height="16"><path d="M12 5v14m-7-7h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>
         Adicionar novo produto
-      </button>`;
+      </button>` });
   }
 
   results.addEventListener('click', e => {
