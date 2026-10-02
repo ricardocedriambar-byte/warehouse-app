@@ -11,6 +11,7 @@
 
 const { updateLinePicked } = require('../lib/orders');
 const { findItemBySku, adjustStock, appendLogEntry, adjustReservado } = require('../lib/sheets');
+const { toPieces } = require('../lib/units');
 
 module.exports = async (req, res) => {
   if (req.method !== 'POST') {
@@ -43,9 +44,7 @@ module.exports = async (req, res) => {
     // this must be a live read, not a cached snapshot.
     const item = await findItemBySku(sku, { fresh: true });
     if (item) {
-      const piecesPicked = (item.unidade && item.unidade !== 'un' && item.dimensaoM2)
-        ? qty / item.dimensaoM2
-        : qty;
+      const piecesPicked = toPieces(item, qty);   // see lib/units.js
       // adjustStock re-reads and verifies internally (see lib/sheets.js) so
       // two lines for the same SKU being picked at nearly the same moment
       // — plausible whenever two orders share a common part — don't lose

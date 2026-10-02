@@ -793,6 +793,52 @@ function fmtNumber(n, decimals = 2) {
   if (n === null || n === undefined || Number.isNaN(n)) return '—';
   return n.toLocaleString('pt-PT', { minimumFractionDigits: 0, maximumFractionDigits: decimals });
 }
+// ─── Unidades de venda vs. peças ─────────────────────────────────────────
+// STOCK/RESERVADO count physical pieces whenever we know how much of the
+// selling unit one piece holds; otherwise they're kept in the selling unit
+// itself. qtyPerPiece() is that "how much per piece" — the same rule
+// lib/units.js applies on the server:
+//   m²  → DIMENSÃO M² (or comprimento × largura)
+//   ml  → comprimento (a 2200 mm rodapé = 2,2 ml)
+//   m³  → comprimento × largura × espessura
+//   lt  → DIMENSÃO M² column, which holds the litres per container
+// (DIMENSÃO M² on ml/m³ items is an area, not a length/volume, so it can't
+// be used for those — that used to turn 10 ml of rodapé into 65 "pieces".)
+function qtyPerPiece(x) {
+  if (!x) return null;
+  const u = x.unidade || 'un';
+  const pos = v => (typeof v === 'number' && Number.isFinite(v) && v > 0) ? v : null;
+  const c = pos(x.comprimento), l = pos(x.largura), e = pos(x.espessura), d = pos(x.dimensaoM2);
+  if (u === 'm²') return d || (c && l ? (c * l) / 1e6 : null);
+  if (u === 'ml') return c ? c / 1000 : null;
+  if (u === 'm³') return (c && l && e) ? (c * l * e) / 1e9 : null;
+  if (u === 'lt') return d;
+  return null;
+}
+
+// "35,91 m² · 6 un" for items sold by measure with a known piece size,
+// "554,4 ml" when there's no piece size, "12 un" for unit items.
+// `pieces` is a stock-style number (STOCK / disponível / mínimo).
+function stockQtyText(item, pieces, decimals = 1) {
+  if (pieces === null || pieces === undefined || Number.isNaN(pieces)) return '—';
+  const u = (item && item.unidade) || 'un';
+  const pp = qtyPerPiece(item);
+  if (pp) return `${fmtNumber(pieces * pp, 2)} ${u} · ${fmtNumber(pieces, decimals)} un`;
+  return `${fmtNumber(pieces, decimals)} ${u}`;
+}
+
+// Same, split in two for the narrow stock column of list rows.
+function stockQtyCellHTML(item, pieces, low) {
+  if (pieces === null || pieces === undefined) return `<span class="browse-row__stock" data-low="${low}">—</span>`;
+  const u = (item && item.unidade) || 'un';
+  const pp = qtyPerPiece(item);
+  if (pp) {
+    return `<span class="browse-row__stock" data-low="${low}">${fmtNumber(pieces * pp, 1)} ${u}</span>
+            <span class="browse-row__stock-sub">${fmtNumber(pieces, 1)} un</span>`;
+  }
+  return `<span class="browse-row__stock" data-low="${low}">${fmtNumber(pieces, 1)}${u !== 'un' ? ' ' + u : ''}</span>`;
+}
+
 function fmtCurrency(n) {
   if (n === null || n === undefined || Number.isNaN(n)) return '—';
   return n.toLocaleString('pt-PT', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
@@ -966,8 +1012,8 @@ function renderItemDetail(item) {
   }
   state.currentItem = item;
   const low = item.stock !== null && item.stock <= 0;
-  const m2Total = item.unidade === 'm²' && item.dimensaoM2 && item.stock !== null
-    ? ` · ${fmtNumber(item.stock * item.dimensaoM2, 2)} m²` : '';
+  const perPiece = qtyPerPiece(item);
+  const stockUnit = perPiece ? 'un' : (item.unidade || 'un');
 
   root.innerHTML = `
     <button class="back-btn" data-goto="scan">‹ Voltar</button>
@@ -990,17 +1036,17 @@ function renderItemDetail(item) {
           <div class="dims-strip__label">Esp. mm</div>
         </div>
         <div class="dims-strip__cell">
-          <div class="dims-strip__value">${fmtNumber(item.dimensaoM2, 3)}</div>
-          <div class="dims-strip__label">m²/un</div>
+          <div class="dims-strip__value">${fmtNumber(perPiece, 3)}</div>
+          <div class="dims-strip__label">${perPiece ? (item.unidade || 'un') : 'm²'}/un</div>
         </div>
       </div>
 
       <div class="field-cards">
         <div class="field-card" id="stock-card">
           <div class="field-card__top">
-            <span class="field-card__label">Stock</span>
+            <span class="field-card__label">Stock${perPiece ? ' (peças)' : ''}</span>
             <span class="field-card__current" data-low="${low}">
-              ${fmtNumber(item.stock, 3)} un${m2Total}
+              ${stockQtyText(item, item.stock, 3)}
             </span>
           </div>
           <div class="stepper">
@@ -1040,9 +1086,9 @@ function renderItemDetail(item) {
 
         <div class="field-card" id="minimo-card">
           <div class="field-card__top">
-            <span class="field-card__label">Stock mínimo</span>
+            <span class="field-card__label">Stock mínimo${perPiece ? ' (peças)' : ''}</span>
             <span class="field-card__current field-card__current--sm" id="minimo-display">
-              ${item.stockMinimo != null ? fmtNumber(item.stockMinimo, 3) + ' un' : 'sem alerta'}
+              ${item.stockMinimo != null ? stockQtyText(item, item.stockMinimo, 3) : 'sem alerta'}
             </span>
           </div>
           <div class="stepper">
@@ -1426,7 +1472,7 @@ function renderBrowseList(query) {
         </div>
         <div>
           <span class="browse-row__stock-label">Stock</span>
-          <span class="browse-row__stock" data-low="${low}">${fmtNumber(item.stock, 1)}</span>
+          ${stockQtyCellHTML(item, item.stock, low)}
         </div>
       </button>`;
   }, { pageSize: 150, key: `${q}|${state.browseLowStockOnly ? 1 : 0}`, onAppend: markSplitSelection });
@@ -1650,8 +1696,8 @@ function renderHome() {
                 <div class="browse-row__desc">${item.descricao}</div>
               </div>
               <div>
-                <span class="browse-row__stock-label">Mín. ${fmtNumber(item.stockMinimo, 0)}</span>
-                <span class="browse-row__stock" data-low="true">${fmtNumber(disp, 1)}</span>
+                <span class="browse-row__stock-label">Mín. ${stockQtyText(item, item.stockMinimo, 0)}</span>
+                ${stockQtyCellHTML(item, disp, true)}
               </div>
             </button>`;
         }).join('');
@@ -1847,10 +1893,11 @@ function renderOrderCreate(existingOrder = null) {
         // itself doesn't carry dimensaoM2 to safely convert back.
         const catalogItem = state.items.find(i => i.sku === l.sku);
         const dimensaoM2 = catalogItem ? catalogItem.dimensaoM2 : null;
+        const canConvert = !!qtyPerPiece({ ...l, dimensaoM2 });
         // Lines saved with qtyMode/qtyEntered (entered as e.g. "5 un" of a
         // m²-priced panel) reopen exactly as they were typed, as long as
         // the catalog still knows the per-unit area to convert with.
-        if (l.qtyMode && l.qtyMode !== (l.unidade || 'un') && l.qtyEntered > 0 && dimensaoM2) {
+        if (l.qtyMode && l.qtyMode !== (l.unidade || 'un') && l.qtyEntered > 0 && canConvert) {
           return { ...l, qtyMode: l.qtyMode, qtyOrdered: l.qtyEntered, dimensaoM2 };
         }
         return { ...l, qtyMode: l.unidade || 'un', dimensaoM2 };
@@ -2053,8 +2100,9 @@ function baseQty(line) {
   // units ("un"), convert to the stored base unit (m²) by multiplying by
   // the per-unit area. If they entered the quantity directly in m² (already
   // the native/base unit), no conversion is needed.
-  if (line.unidade === 'm²' && line.dimensaoM2 && (line.qtyMode || 'un') === 'un')
-    return (line.qtyOrdered || 0) * line.dimensaoM2;
+  const pp = qtyPerPiece(line);
+  if (pp && (line.unidade || 'un') !== 'un' && (line.qtyMode || 'un') === 'un')
+    return (line.qtyOrdered || 0) * pp;
   return line.qtyOrdered || 0;
 }
 
@@ -2083,9 +2131,8 @@ function toOrderLine(line) {
 // is what stockWarningText/findInsufficientStockLines below actually need
 // to compare against item.disponivel.
 function toPiecesQty(item, qtyInPricingUnit) {
-  return (item.unidade && item.unidade !== 'un' && item.dimensaoM2)
-    ? qtyInPricingUnit / item.dimensaoM2
-    : qtyInPricingUnit;
+  const pp = qtyPerPiece(item);
+  return pp ? qtyInPricingUnit / pp : qtyInPricingUnit;
 }
 
 // Looks the line's SKU up in the loaded catalog and, if it tracks stock
@@ -2098,10 +2145,10 @@ function stockWarningText(line) {
   if (!item || item.disponivel === null || item.disponivel === undefined) return '';
   const requestedPieces = toPiecesQty(item, baseQty(line));
   if (requestedPieces <= item.disponivel) return '';
-  const hasConversion = item.unidade && item.unidade !== 'un' && !!item.dimensaoM2;
-  if (hasConversion) {
-    const availablePricing = item.disponivel * item.dimensaoM2;
-    return `Apenas ${fmtNumber(item.disponivel)} un (${fmtNumber(availablePricing, 2)} ${item.unidade}) disponíveis`;
+  const pp = qtyPerPiece(item);
+  if (pp) {
+    const availablePricing = item.disponivel * pp;
+    return `Apenas ${fmtNumber(availablePricing, 2)} ${item.unidade} (${fmtNumber(item.disponivel)} un) disponíveis`;
   }
   return `Apenas ${fmtNumber(item.disponivel)} ${item.unidade || line.unidade || 'un'} disponíveis`;
 }
@@ -2118,14 +2165,14 @@ function findInsufficientStockLines(lines) {
     if (!item || item.disponivel === null || item.disponivel === undefined) continue;
     const requestedPieces = toPiecesQty(item, line.qtyOrdered || 0);
     if (requestedPieces > item.disponivel) {
-      const hasConversion = item.unidade && item.unidade !== 'un' && !!item.dimensaoM2;
+      const pp = qtyPerPiece(item);
       shortages.push({
         sku: line.sku,
         descricao: item.descricao || line.descricao || '',
         requested: line.qtyOrdered || 0,
         unidade: item.unidade || line.unidade || 'un',
         available: item.disponivel,
-        availablePricing: hasConversion ? item.disponivel * item.dimensaoM2 : null
+        availablePricing: pp ? item.disponivel * pp : null
       });
     }
   }
@@ -2139,14 +2186,15 @@ function renderOrderLines() {
 
   list.innerHTML = orderState.newOrderLines.map((line, idx) => {
     const nativeUnit    = line.unidade || 'un';
-    const hasConversion = nativeUnit !== 'un' && !!line.dimensaoM2;
+    const perPiece      = qtyPerPiece(line);
+    const hasConversion = nativeUnit !== 'un' && !!perPiece;
     const qtyMode       = line.qtyMode || 'un';
     const hasDims       = (line.comprimento || line.largura || line.espessura);
     const discountPct   = line.discountPct || 0;
     const convEquiv = hasConversion && qtyMode === 'un'
-      ? `→ ${fmtNumber((line.qtyOrdered||0) * line.dimensaoM2, 3)} ${nativeUnit}`
+      ? `→ ${fmtNumber((line.qtyOrdered||0) * perPiece, 3)} ${nativeUnit}`
       : hasConversion && qtyMode === nativeUnit
-      ? `→ ${fmtNumber((line.qtyOrdered||0) / line.dimensaoM2, 2)} un`
+      ? `→ ${fmtNumber((line.qtyOrdered||0) / perPiece, 2)} un`
       : '';
     // baseQty: price is per pricing unit (m²), so "5 un" must be converted
     // before multiplying — otherwise the card showed 5 × 10 € instead of 28,98 m² × 10 €.
@@ -2158,7 +2206,7 @@ function renderOrderLines() {
           <div class="order-line-card__info">
             <div class="order-line-card__sku">${line.sku}</div>
             <div class="order-line-card__desc">${line.descricao}</div>
-            ${hasDims ? `<div class="order-line-card__dims">${fmtNumber(line.comprimento,0)}×${fmtNumber(line.largura,0)}×${fmtNumber(line.espessura,0)}mm${hasConversion ? ` · ${fmtNumber(line.dimensaoM2,3)} ${nativeUnit}/un` : ''}</div>` : ''}
+            ${hasDims ? `<div class="order-line-card__dims">${fmtNumber(line.comprimento,0)}×${fmtNumber(line.largura,0)}×${fmtNumber(line.espessura,0)}mm${hasConversion ? ` · ${fmtNumber(perPiece,3)} ${nativeUnit}/un` : ''}</div>` : ''}
           </div>
           <button class="order-line-card__remove" data-remove="${idx}" type="button">×</button>
         </div>
@@ -2233,11 +2281,12 @@ function renderOrderLines() {
         // instead of the panel's actual area. Converting the value here
         // means the toggle re-expresses the same real quantity in the
         // other unit, instead of quietly changing what's being ordered.
-        if (newMode !== oldMode && line.dimensaoM2) {
+        const pp = qtyPerPiece(line);
+        if (newMode !== oldMode && pp) {
           const currentQty = line.qtyOrdered || 0;
           const converted = oldMode === 'un'
-            ? currentQty * line.dimensaoM2
-            : currentQty / line.dimensaoM2;
+            ? currentQty * pp
+            : currentQty / pp;
           line.qtyOrdered = Math.round(converted * 1000) / 1000;
           const qtyInputEl = list.querySelector(`[data-field="qty"][data-idx="${idx}"]`);
           if (qtyInputEl) qtyInputEl.value = line.qtyOrdered;
@@ -2257,14 +2306,15 @@ function renderOrderLines() {
       }
 
       const nativeUnit    = line.unidade || 'un';
-      const hasConversion = nativeUnit !== 'un' && !!line.dimensaoM2;
+      const linePP        = qtyPerPiece(line);
+      const hasConversion = nativeUnit !== 'un' && !!linePP;
       const qtyLabel = list.querySelector(`#qty-label-${idx}`);
       if (qtyLabel && hasConversion) {
         const qty  = line.qtyOrdered || 0;
         const mode = line.qtyMode || 'un';
         qtyLabel.textContent = mode === 'un'
-          ? `→ ${fmtNumber(qty * line.dimensaoM2, 3)} ${nativeUnit}`
-          : `→ ${fmtNumber(qty / line.dimensaoM2, 2)} un`;
+          ? `→ ${fmtNumber(qty * linePP, 3)} ${nativeUnit}`
+          : `→ ${fmtNumber(qty / linePP, 2)} un`;
       }
 
       const warnEl = list.querySelector(`#stock-warn-${idx}`);
@@ -2350,7 +2400,7 @@ async function showItemSearchOverlay() {
           </div>
           <div style="margin-top:4px">
             <span class="browse-row__stock-label">Disp.</span>
-            <span class="browse-row__stock" data-low="${low}">${fmtNumber(disp, 1)}</span>
+            ${stockQtyCellHTML(item, disp, low)}
           </div>
         </div>
       </button>`;
@@ -2374,7 +2424,7 @@ async function showItemSearchOverlay() {
     // vendedor thinking in € per m² shouldn't have to remember to flip the
     // toggle on every single line just to type the number they already
     // have in mind.
-    const hasConversion = item.unidade && item.unidade !== 'un' && !!item.dimensaoM2;
+    const hasConversion = item.unidade && item.unidade !== 'un' && !!qtyPerPiece(item);
     orderState.newOrderLines.push({
       sku: item.sku, descricao: item.descricao,
       comprimento: item.comprimento, largura: item.largura, espessura: item.espessura,
@@ -3007,8 +3057,10 @@ function renderOrderPick(order, isDraft) {
       <div class="pick-lines">
         ${order.lines.map((line, lineIndex) => {
           const done = line.qtyPicked >= line.qtyOrdered;
-          const perUnitArea = (line.unidade === 'm²' && line.comprimento && line.largura)
-            ? (line.comprimento * line.largura) / 1_000_000 : 0;
+          const catalogItem = state.items.find(i => i.sku === line.sku);
+          const perUnitArea = (line.unidade && line.unidade !== 'un')
+            ? (qtyPerPiece({ ...line, dimensaoM2: catalogItem ? catalogItem.dimensaoM2 : null }) || 0)
+            : 0;
           const unitsEquiv = perUnitArea > 0
             ? ` (≈ ${fmtNumber(line.qtyOrdered / perUnitArea, 2)} un)` : '';
           const remainingNative = line.qtyOrdered - line.qtyPicked;

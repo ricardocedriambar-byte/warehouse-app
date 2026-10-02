@@ -822,6 +822,7 @@ input[type=number] { -moz-appearance: textfield; }
 .browse-row__dims { font-family: var(--mono); font-size: 10px; color: var(--t3); margin-top: 2px; }
 .browse-row__stock { font-family: var(--mono); font-size: 15px; font-weight: 700; text-align: right; flex: 0 0 auto; }
 .browse-row__stock[data-low="true"] { color: var(--danger); }
+.browse-row__stock-sub { font-family: var(--mono); font-size: 11px; color: var(--t3); display: block; text-align: right; margin-top: 1px; }
 .browse-row__stock-label { font-size: 9px; color: var(--t3); text-transform: uppercase; display: block; text-align: right; margin-bottom: 1px; }
 
 .browse__empty, .browse__loading {
