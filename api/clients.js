@@ -106,7 +106,7 @@ module.exports = async (req, res) => {
       // POST /api/clients?sync=j5f[&dryRun=1] -> read-only J5F sync (tools/j5f-sync)
       if (req.query && req.query.sync === 'j5f') {
         if (!isJ5fAuthorized(req)) { res.status(401).json({ error: 'Unauthorized' }); return; }
-        const result = await syncJ5fClients(req.body, { dryRun: req.query.dryRun === '1' });
+        const result = await syncJ5fClients(req.body, { dryRun: req.query.dryRun === '1', force: req.query.force === '1' });
         res.status(200).json(result);
         return;
       }
