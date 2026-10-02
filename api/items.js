@@ -3,7 +3,8 @@
 // GET  /api/items                -> all items
 // GET  /api/items?sku=01101100   -> single item by SKU (used right after a scan)
 // POST /api/items                -> update an item's stock/preco/unidade
-//   body: { rowNumber, sku, stock?, preco?, unidade?, note? }
+//   body: { rowNumber, sku, stock?, preco?, unidade?, stockMinimo?, observacoes?, note? }
+//   stockMinimo: number, or null/'' to remove the threshold (no low-stock alert)
 //
 // GET and POST used to be two separate files (items.js, update-item.js).
 // Merged into one — see api/push.js's comment for why: Vercel's Hobby plan
@@ -42,14 +43,26 @@ module.exports = async (req, res) => {
 
   if (req.method === 'POST') {
     try {
-      const { rowNumber, sku, stock, preco, unidade, note } = req.body || {};
+      const { rowNumber, sku, stock, preco, unidade, stockMinimo, observacoes, note } = req.body || {};
 
       if (!rowNumber || !sku) {
         res.status(400).json({ error: 'rowNumber and sku are required' });
         return;
       }
-      if (stock === undefined && preco === undefined && unidade === undefined) {
-        res.status(400).json({ error: 'Provide at least one of stock, preco, or unidade to update' });
+      if (stock === undefined && preco === undefined && unidade === undefined && stockMinimo === undefined && observacoes === undefined) {
+        res.status(400).json({ error: 'Provide at least one of stock, preco, unidade, stockMinimo or observacoes to update' });
+        return;
+      }
+      let newStockMinimo;
+      if (stockMinimo !== undefined) {
+        newStockMinimo = (stockMinimo === null || stockMinimo === '') ? null : parsePtNumber(stockMinimo);
+        if (newStockMinimo !== null && (Number.isNaN(newStockMinimo) || newStockMinimo < 0)) {
+          res.status(400).json({ error: 'Stock mínimo inválido' });
+          return;
+        }
+      }
+      if (observacoes !== undefined && typeof observacoes !== 'string') {
+        res.status(400).json({ error: 'Observações inválidas' });
         return;
       }
       if (unidade !== undefined && !VALID_UNIDADES.includes(unidade)) {
@@ -79,6 +92,15 @@ module.exports = async (req, res) => {
       if (unidade !== undefined) {
         updates.unidade = unidade;
         logEntries.push({ sku, descricao: current.descricao, field: 'UNIDADE', oldValue: current.unidade, newValue: unidade, note });
+      }
+
+      if (stockMinimo !== undefined) {
+        updates.stockMinimo = newStockMinimo;
+        logEntries.push({ sku, descricao: current.descricao, field: 'STOCK MINIMO', oldValue: current.stockMinimo ?? '', newValue: newStockMinimo ?? '', note });
+      }
+      if (observacoes !== undefined) {
+        updates.observacoes = observacoes.trim().slice(0, 1000);
+        logEntries.push({ sku, descricao: current.descricao, field: 'OBSERVACOES', oldValue: current.observacoes || '', newValue: updates.observacoes, note });
       }
 
       await updateItemFields(current.rowNumber, updates);

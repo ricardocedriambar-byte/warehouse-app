@@ -1037,14 +1037,40 @@ function renderItemDetail(item) {
           </div>
           <button class="field-card__save" id="preco-save" type="button">Guardar preço</button>
         </div>
-      </div>
 
-      ${item.observacoes ? `<div class="purchase-note">${item.observacoes}</div>` : ''}
+        <div class="field-card" id="minimo-card">
+          <div class="field-card__top">
+            <span class="field-card__label">Stock mínimo</span>
+            <span class="field-card__current field-card__current--sm" id="minimo-display">
+              ${item.stockMinimo != null ? fmtNumber(item.stockMinimo, 3) + ' un' : 'sem alerta'}
+            </span>
+          </div>
+          <div class="stepper">
+            <button class="stepper__btn" data-step="-1" type="button">−</button>
+            <input class="stepper__input" id="minimo-input" type="number" step="any" min="0"
+              value="${item.stockMinimo ?? ''}" inputmode="decimal" placeholder="sem alerta" />
+            <button class="stepper__btn" data-step="1" type="button">+</button>
+          </div>
+          <div class="field-card__hint">Recebe um alerta quando o disponível desce abaixo deste valor. Deixe vazio para não alertar.</div>
+          <button class="field-card__save" id="minimo-save" type="button">Guardar stock mínimo</button>
+        </div>
+
+        <div class="field-card" id="obs-card">
+          <div class="field-card__top">
+            <span class="field-card__label">Observações</span>
+          </div>
+          <textarea class="field-card__textarea" id="obs-input" rows="3" maxlength="1000"
+            placeholder="Notas sobre este artigo">${itemEsc(item.observacoes || '')}</textarea>
+          <button class="field-card__save" id="obs-save" type="button">Guardar observações</button>
+        </div>
+      </div>
     </div>`;
 
   root.querySelector('[data-goto]').addEventListener('click', () => setView('scan', { direction: 'back' }));
   wireFieldCard(root, 'stock', item.stock, val => saveField('stock', val));
   wireFieldCard(root, 'preco', item.preco, val => saveField('preco', val));
+  wireMinimoCard(root, item);
+  wireObsCard(root, item);
 
   // Unidade buttons — only show when unit not yet set
   root.querySelectorAll('.unidade-btn').forEach(btn => {
@@ -1058,6 +1084,50 @@ function renderItemDetail(item) {
     });
   });
   markSplitSelection();
+}
+
+function itemEsc(v) {
+  return String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// Stock mínimo can be blank (= no low-stock alert), so it can't reuse
+// wireFieldCard, which treats the field as always numeric.
+function wireMinimoCard(root, item) {
+  const card = root.querySelector('#minimo-card');
+  const input = root.querySelector('#minimo-input');
+  const saveBtn = root.querySelector('#minimo-save');
+  if (!card || !input || !saveBtn) return;
+  const baseline = item.stockMinimo ?? null;
+  const current = () => (input.value.trim() === '' ? null : parseFloat(input.value));
+  const markDirty = () => { saveBtn.dataset.dirty = String(current() !== baseline); };
+  card.querySelectorAll('.stepper__btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const next = Math.max(0, Math.round(((current() ?? 0) + parseFloat(btn.dataset.step)) * 1000) / 1000);
+      input.value = next;
+      markDirty();
+    });
+  });
+  input.addEventListener('input', markDirty);
+  saveBtn.addEventListener('click', async () => {
+    const v = current();
+    if (v !== null && (Number.isNaN(v) || v < 0)) { toast('Valor inválido', 'error'); return; }
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'A guardar…';
+    await saveField('stockMinimo', v);
+  });
+}
+
+function wireObsCard(root, item) {
+  const input = root.querySelector('#obs-input');
+  const saveBtn = root.querySelector('#obs-save');
+  if (!input || !saveBtn) return;
+  const baseline = (item.observacoes || '').trim();
+  input.addEventListener('input', () => { saveBtn.dataset.dirty = String(input.value.trim() !== baseline); });
+  saveBtn.addEventListener('click', async () => {
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'A guardar…';
+    await saveField('observacoes', input.value.trim());
+  });
 }
 
 function wireFieldCard(root, key, initialValue, onSave) {
@@ -1101,6 +1171,8 @@ async function saveField(field, value) {
   if (field === 'stock')   body.stock   = value;
   if (field === 'preco')   body.preco   = value;
   if (field === 'unidade') body.unidade = value;
+  if (field === 'stockMinimo') body.stockMinimo = value;
+  if (field === 'observacoes') body.observacoes = value;
 
   try {
     const res = await fetch('/api/items', {
@@ -1113,7 +1185,10 @@ async function saveField(field, value) {
     state.currentItem = { ...state.currentItem, ...data.item };
     const idx = state.items.findIndex(i => i.sku === item.sku);
     if (idx !== -1) state.items[idx] = { ...state.items[idx], ...data.item };
-    toast(field === 'stock' ? 'Stock atualizado' : field === 'preco' ? 'Preço atualizado' : 'Unidade guardada', 'success');
+    toast({
+      stock: 'Stock atualizado', preco: 'Preço atualizado', unidade: 'Unidade guardada',
+      stockMinimo: 'Stock mínimo guardado', observacoes: 'Observações guardadas'
+    }[field] || 'Guardado', 'success');
     renderItemDetail(state.currentItem);
   } catch (err) {
     console.error(err);

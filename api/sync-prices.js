@@ -66,6 +66,13 @@ module.exports = async (req, res) => {
   // One-shot Sheets → Postgres import (see lib/migrate.js). Needs a secret
   // to be configured — never runs on an open endpoint.
   if (req.query.migrate === '1') {
+    // Disabled once the migration was done: an accidental &replace=1 would
+    // overwrite live data with the frozen Google Sheet. Set
+    // MIGRATION_ENABLED=1 in Vercel (and redeploy) only if it's ever needed again.
+    if (!['1', 'true', 'yes'].includes(String(process.env.MIGRATION_ENABLED || '').trim().toLowerCase())) {
+      res.status(403).json({ error: 'Importação desativada. Defina MIGRATION_ENABLED=1 no Vercel para a voltar a usar.' });
+      return;
+    }
     if (!(process.env.CRON_SECRET || process.env.SYNC_SECRET)) {
       res.status(403).json({ error: 'Defina CRON_SECRET no Vercel antes de migrar' });
       return;

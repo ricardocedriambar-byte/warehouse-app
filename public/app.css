@@ -725,6 +725,16 @@ input[type=number] { -moz-appearance: textfield; }
 .field-card__save[data-dirty="true"] { opacity: 1; pointer-events: auto; box-shadow: var(--shadow-sm); }
 .field-card__save:active { opacity: 0.8; transform: scale(0.97); }
 
+.field-card__current--sm { font-size: 16px; }
+.field-card__hint { margin-top: var(--sp-2); font-size: 11px; color: var(--t3); line-height: 1.4; }
+.field-card__textarea {
+  width: 100%; box-sizing: border-box; resize: vertical; min-height: 72px;
+  background: var(--s3); border: 1px solid var(--b1); color: var(--t1);
+  border-radius: var(--r-sm); padding: var(--sp-2) var(--sp-3);
+  font: inherit; font-size: 14px; line-height: 1.4; outline: none;
+}
+.field-card__textarea:focus { border-color: var(--b3); }
+
 .purchase-note {
   margin-top: var(--sp-4);
   font-family: var(--mono);
